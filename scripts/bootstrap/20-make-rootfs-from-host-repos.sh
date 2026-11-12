@@ -48,12 +48,10 @@ mkdir -p "$OUT" "$CACHE"
 log "主机：${PRETTY_NAME:-Kylin} / $(uname -m)"
 log "检查主机软件源..."
 dnf -q repolist --enabled | tee "$LOG"
-if ! grep -Eq '^[[:alnum:]_.+-]+[[:space:]]+' "$LOG"; then
-  die "没有启用的软件源。请先在主机上配置并验证 dnf repolist。"
-fi
+# 不在此处猜测仓库 ID；若仓库不可用，后续 dnf install 会以原始错误退出。
 
 if [[ "$KEEP_REPO_CONFIG" == "1" ]]; then
-  if grep -RniE '(^|[[:space:]])(username|password|token|sslclientcert|sslclientkey)[[:space:]]*=|https?://[^/@:]+:[^/@]+@' "$REPO_DIR" 2>/dev/null; then
+  if grep -RniE '(^|[[:space:]])(username|password|token|sslclientcert|sslclientkey)[[:space:]]*=|https?://[^/@:]+:[^/@]+@|[?&](token|password|apikey)=' "$REPO_DIR" 2>/dev/null; then
     die "检测到 repo 文件可能含账号/密码/Token/客户端证书配置。拒绝把凭据写入镜像；请使用不含凭据的 repo 文件或 KEEP_REPO_CONFIG=0。"
   fi
 fi
