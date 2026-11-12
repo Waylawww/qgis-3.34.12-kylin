@@ -1,0 +1,55 @@
+# QGIS 3.34.12 构建/运行能力矩阵
+# 列：key <TAB> min_version <TAB> probe <TAB> probe_arg <TAB> provides <TAB> candidates <TAB> required <TAB> note
+# min_version=0.0.0 表示官方未声明下限，只校验"存在"，不虚构版本。
+# candidates/provides 是 Fedora/RHEL 风格的「候选名」，必须由 scripts/probe-kylin.py
+# 在真实麒麟 V10 上用 repoquery --whatprovides 解析出真实包名后才生效。
+# 依据：QGIS release-3_34/INSTALL.md + QGIS final-3_34_12/CMakeLists.txt
+# ----------------------------------------------------------------------------------------------------------------------
+# key	min_version	probe	probe_arg	provides	candidates	required	note
+cmake	3.12.0	cmd	cmake	cmake	cmake,cmake3	yes	CMakeLists cmake_minimum_required(VERSION 3.12.0)
+flex	2.6.0	cmd	flex	flex	flex	yes	CMakeLists find_package(FLEX 2.6 REQUIRED)；INSTALL.md 写 2.5.6，以源码为准
+bison	2.4.0	cmd	bison	bison	bison	yes	INSTALL.md Bison>=2.4
+make	0.0.0	cmd	make	make	make	yes	构建驱动
+gcc	0.0.0	cmd	gcc	gcc	gcc	yes	需支持 C++17，具体版本由 probe 采集后人工确认
+gcc_cxx	0.0.0	cmd	g++	gcc-c++	gcc-c++	yes	C++ 编译器
+git	0.0.0	cmd	git	git	git	yes	拉取并校验 QGIS 官方 tag
+bzip2	0.0.0	cmd	bzip2	bzip2	bzip2	yes	rpm/buildrpms.sh 用 bzip2 生成源码 tarball
+rpmbuild	0.0.0	cmd	rpmbuild	rpm-build	rpm-build,rpmdevtools	yes	原生 RPM 打包，不使用 alien/fpm
+cpio	0.0.0	cmd	cpio	cpio	cpio	yes	rpm2cpio 解包做静态校验
+binutils	0.0.0	cmd	objdump	binutils	binutils	yes	ISA 与 GLIBC 符号校验
+pkgconfig	0.0.0	cmd	pkg-config	pkgconfig	pkgconfig,pkgconf-pkg-config	yes	依赖探测
+python3	3.7	cmd	python3	python3	python3,python36	yes	CMakeLists MIN_PYTHON_VERSION 3.7
+python3_devel	0.0.0	header	Python.h	pkgconfig(python3)	python3-devel,python36-devel	yes	Python.h；WITH_BINDINGS 需要 Development 组件
+qt5core	5.14.0	pkgconfig	Qt5Core	pkgconfig(Qt5Core)	qt5-qtbase-devel,qt5-devel	yes	CMakeLists QT_MIN_VERSION 5.14.0
+qt5_private	0.0.0	header	QtCore/private/qobject_p.h	qt5-qtbase-private-devel	qt5-qtbase-private-devel	yes	官方 spec 的 qt5-qtbase-private-devel
+qt5_svg	0.0.0	pkgconfig	Qt5Svg	pkgconfig(Qt5Svg)	qt5-qtsvg-devel	yes	Qt5 COMPONENTS Svg REQUIRED
+qt5_positioning	0.0.0	pkgconfig	Qt5Positioning	pkgconfig(Qt5Positioning)	qt5-qtlocation-devel	yes	Qt5 COMPONENTS Positioning REQUIRED
+qt5_multimedia	0.0.0	pkgconfig	Qt5Multimedia	pkgconfig(Qt5Multimedia)	qt5-qtmultimedia-devel	yes	官方 spec/INSTALL 均列出
+qt5_printsupport	0.0.0	pkgconfig	Qt5PrintSupport	pkgconfig(Qt5PrintSupport)	qt5-qtbase-devel	yes	Qt5 COMPONENTS PrintSupport REQUIRED
+qt5_tools	0.0.0	cmd	lrelease	qt5-qttools-static	qt5-qttools-static,qt5-qttools-devel,qt5-linguist	yes	i18n 需要 lrelease
+qt5_3d	5.14.0	pkgconfig	Qt53DCore	pkgconfig(Qt53DCore)	qt5-qt3d-devel	yes	WITH_3D=TRUE 需要 Qt5 3DCore/Render/Input/Logic/Extras
+qt5_sql_sqlite	0.0.0	header	QtSql/qsqldatabase.h	qt5-qtdatabase-plugin-sqlite	qt5-qtbase,libqt5-qtbase-sqlite	yes	Qt5 COMPONENTS Sql REQUIRED
+qwt	5.0.0	pkgconfig	qwt-qt5	pkgconfig(qwt-qt5)	qwt-qt5-devel,qwt-devel	yes	INSTALL.md Qwt>=5.0 且 <6.1(内部 QwtPolar)
+qscintilla2	0.0.0	pkgconfig	qscintilla2_qt5	pkgconfig(qscintilla2_qt5)	qscintilla-qt5-devel,qscintilla-devel	yes	find_package(QScintilla REQUIRED)
+qca	0.0.0	pkgconfig	qca2-qt5	pkgconfig(qca2-qt5)	qca-qt5-devel,qca-devel	yes	find_package(QCA REQUIRED)
+qtkeychain	0.5	pkgconfig	qt5keychain	pkgconfig(qt5keychain)	qtkeychain-qt5-devel,qtkeychain-devel	yes	INSTALL.md qtkeychain>=0.5
+gdal	3.2.0	cmd	gdal-config	pkgconfig(gdal)	gdal-devel,gdal34-devel	yes	INSTALL.md GDAL/OGR>=3.2.0
+geos	3.9.0	cmd	geos-config	pkgconfig(geos)	geos-devel	yes	INSTALL.md GEOS>=3.9
+proj	7.2.0	pkgconfig	proj	pkgconfig(proj)	proj-devel	yes	INSTALL.md Proj>=7.2.0
+sqlite3	3.0.0	pkgconfig	sqlite3	pkgconfig(sqlite3)	sqlite-devel	yes	INSTALL.md Sqlite3>=3.0.0
+spatialite	4.2.0	pkgconfig	spatialite	pkgconfig(spatialite)	libspatialite-devel	yes	WITH_SPATIALITE=TRUE 时 find_package REQUIRED
+spatialindex	0.0.0	pkgconfig	libspatialindex	pkgconfig(libspatialindex)	spatialindex-devel	yes	find_package(Spatialindex REQUIRED)
+expat	1.95	pkgconfig	expat	pkgconfig(expat)	expat-devel	yes	INSTALL.md expat>=1.95
+libzip	0.0.0	pkgconfig	libzip	pkgconfig(libzip)	libzip-devel	yes	find_package(LibZip REQUIRED)
+protobuf	0.0.0	cmd	protoc	protobuf-compiler	protobuf-devel,protobuf-compiler,protobuf-lite-devel	yes	find_package(Protobuf REQUIRED) 且需要 protoc
+exiv2	0.0.0	pkgconfig	exiv2	pkgconfig(exiv2)	exiv2-devel	yes	find_package(EXIV2 REQUIRED)
+zlib	0.0.0	pkgconfig	zlib	pkgconfig(zlib)	zlib-devel	yes	find_package(ZLIB REQUIRED)
+gsl	1.8	pkgconfig	gsl	pkgconfig(gsl)	gsl-devel	yes	WITH_GSL 默认 TRUE，地理配准需要
+postgresql	0.0.0	pkgconfig	libpq	pkgconfig(libpq)	postgresql-devel,libpq-devel	yes	WITH_POSTGRESQL=TRUE（find_package 非 REQUIRED，但 PostGIS 支持需要）
+sip	0.0.0	python_module	sip	python3-sip-devel	python3-sip-devel,python3-pyqt5-sip,python3-sip	yes	WITH_BINDINGS 需要 find_package(SIP REQUIRED)
+pyqt5	0.0.0	python_module	PyQt5.QtCore	python3-qt5-devel	python3-qt5-devel,python3-qt5	yes	WITH_BINDINGS 需要 find_package(PyQt5 REQUIRED)
+pyqsci	0.0.0	python_module	PyQt5.Qsci	python3-qscintilla-qt5	python3-qscintilla-qt5	yes	WITH_BINDINGS 需要 find_package(Qsci REQUIRED)
+qca_ossl	0.0.0	rpm	qca-qt5-ossl	qca-qt5-ossl	qca-qt5-ossl,qca-ossl	no	运行时 QCA openssl 插件；官方 spec 显式 Requires
+gdal_python	0.0.0	python_module	osgeo.gdal	python3-gdal	gdal-python3,python3-gdal	no	官方 spec 中 python3-qgis 的 Requires
+gettext	0.0.0	cmd	msgfmt	gettext	gettext	no	i18n 可选工具
+xvfb	0.0.0	cmd	Xvfb	xorg-x11-server-Xvfb	xorg-x11-server-Xvfb,xvfb	no	VM 中 UKUI/Qt GUI 启动验证用

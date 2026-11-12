@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1.6
+# ============================================================================
+# 当官方/私有仓库都拿不到 Kylin V10 容器镜像时的兜底：
+# 由 scripts/bootstrap/10-make-rootfs.sh 从官方 ISO 生成 rootfs tar，
+# 再用本 Dockerfile 打成 scratch 镜像并推送到 GHCR/私有仓库。
+#
+# 构建：docker build -f docker/Dockerfile.bootstrap \
+#         --build-arg ROOTFS=kylin-v10-rootfs.tar -t <registry>/kylin-v10:base out/
+# ============================================================================
+ARG ROOTFS=kylin-v10-rootfs.tar
+FROM scratch
+ADD ${ROOTFS} /
+LABEL org.opencontainers.image.title="Kylin Server V10 Halberd x86_64 minimal rootfs" \
+      org.opencontainers.image.description="Generated from official Kylin V10 ISO; RPM/dnf userspace"
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+CMD ["/bin/bash"]

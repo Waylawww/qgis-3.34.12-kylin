@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.6
+# ============================================================================
+# 轻量探测镜像：只装最小工具，用真实麒麟源解析 QGIS 依赖包名/版本。
+# 不依赖 config/*confirmed.env（这正是它要生成的东西）。
+# 由 .github/workflows/probe-kylin.yml 使用。
+# ============================================================================
+ARG KYLIN_BASE_IMAGE
+FROM ${KYLIN_BASE_IMAGE} AS qgis-probe
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+RUN set -eux; \
+    if command -v dnf >/dev/null 2>&1; then PM=dnf; \
+    elif command -v yum >/dev/null 2>&1; then PM=yum; \
+    elif command -v microdnf >/dev/null 2>&1; then PM=microdnf; \
+    else echo "FATAL: base image is not an RPM/dnf distro" >&2; exit 1; fi; \
+    $PM -y install python3 rpm curl ca-certificates tar bzip2 which \
+        gcc pkgconfig dnf-plugins-core yum-utils || \
+    $PM -y install python3 rpm curl ca-certificates tar bzip2 which; \
+    $PM clean all >/dev/null 2>&1 || true; \
+    python3 -V; rpm --version; $PM --version
+
+WORKDIR /opt/qgis-build
+COPY config/  /opt/qgis-build/config/
+COPY scripts/ /opt/qgis-build/scripts/
+COPY packaging/ /opt/qgis-build/packaging/
+RUN mkdir -p /opt/qgis-build/reports /opt/qgis-build/packaging/generated /opt/qgis-build/config
+
+ENTRYPOINT ["python3", "/opt/qgis-build/scripts/probe-kylin.py", "--write"]

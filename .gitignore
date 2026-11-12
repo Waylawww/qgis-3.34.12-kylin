@@ -1,0 +1,18 @@
+# 构建产物 / 中间目录（不入库）
+/work/
+/out/
+/reports/
+/build/
+/cache/
+# 注意：config/*.confirmed.env、packaging/generated/*.inc 是「已确认参数」，
+# 必须提交入库供 GitHub Actions 使用（它们不含密钥，只有包名/版本/系统事实）。
+/vm/
+/packaging/qgis-kylin.spec
+*.log
+*.rpm
+*.tar.bz2
+*.qcow2
+*.iso
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,256 @@
+# ============================================================================
+# QGIS 3.34.12 for 银河麒麟高级服务器操作系统 V10 (Halberd) / x86_64 / Hygon C86
+#
+# 依据 QGIS 官方 rpm/qgis.spec.template (tag final-3_34_12) 改写：
+#   * 保留官方 %build 的 CMake 开关口径、BINDINGS_GLOBAL_INSTALL、文件分包思路；
+#   * 去掉 Fedora 专用宏 (%cmake/%cmake_build/%find_lang--with-qt/mock chroot)，
+#     改用显式 cmake + make，避免麒麟 rpm 宏缺失导致构建失败；
+#   * 关闭麒麟源通常不具备的 QtWebKit / PDAL / Draco / GRASS / Server；
+#   * 保留 WITH_DESKTOP / WITH_3D / WITH_BINDINGS = TRUE；
+#   * %files 由 %install 阶段按真实安装树动态生成，杜绝虚构文件清单；
+#   * 所有 BuildRequires/Requires 来自麒麟实测 config/deps.confirmed.env。
+#
+# 本文件由 scripts/render-spec.py 渲染，请勿直接 rpmbuild 本模板。
+# 生成时间: @GENERATED_AT@
+# 目标系统: @KYLIN_OS@ / glibc @KYLIN_GLIBC@ / PM @KYLIN_PACKAGE_MANAGER@
+# ============================================================================
+
+%global __python @QGIS_PYTHON3_BIN@
+%global debug_package %{nil}
+%global _build_id_links none
+%global _missing_build_ids_terminate_build 0
+%global _unpackaged_files_terminate_build 1
+%global __provides_exclude_from ^(%{_libdir}/qgis/plugins|@QGIS_PYTHON3_SITEARCH@/qgis)/.*\.so.*$
+
+Name:           qgis
+Version:        @QGIS_VERSION@
+Release:        @QGIS_RELEASE@
+Summary:        QGIS Desktop @QGIS_VERSION@ for Kylin Server V10 x86_64 (Qt5 / PyQGIS / 3D)
+License:        GPL-2.0-or-later
+URL:            https://qgis.org
+Source0:        @QGIS_SOURCE_TARBALL@
+BuildArch:      x86_64
+
+# ---- 由 scripts/probe-kylin.py 在真实麒麟 V10 源上解析出的原生 RPM 包名 ----
+@BUILDREQUIRES_LINES@
+
+# ---- 运行期依赖：共享库由 RPM 自动生成，此处补齐插件/数据类依赖 ----
+@RUNTIME_REQUIRES_LINES@
+
+%description
+QGIS @QGIS_VERSION@ (Prizren LTR) built natively on Kylin Server V10 x86_64.
+Built from the official QGIS GitHub tag final-3_34_12
+(commit eeb6af363865e463b8f058b7d79fd5378c4bf065).
+Qt5, PyQGIS bindings and the 3D library are enabled.
+Compiled with the x86-64 baseline ISA (-march=x86-64 -mtune=generic);
+no AVX/AVX2/AVX-512 instructions are emitted by this package.
+This is a native RPM build: no Debian/Ubuntu binaries are bundled.
+
+%package devel
+Summary:        Development headers and CMake modules for QGIS @QGIS_VERSION@
+Requires:       %{name}%{?_isa} = %{version}-%{release}
+%description devel
+Headers, unversioned shared library links and FindQGIS.cmake.
+
+%package -n python3-qgis
+Summary:        PyQGIS Python bindings and core plugins for QGIS @QGIS_VERSION@
+Requires:       %{name}%{?_isa} = %{version}-%{release}
+Provides:       qgis-python = %{version}-%{release}
+%description -n python3-qgis
+PyQGIS bindings (qgis.core / qgis.gui / qgis.analysis / qgis._3d) and
+the stage-installed core Python plugins.
+
+# ---------------------------------------------------------------------------
+%prep
+%setup -q -n @QGIS_SOURCE_DIR_NAME@
+test -f CMakeLists.txt
+test -f COPYING
+# 再校验一次版本，防止 SOURCE0 被替换
+grep -qE '^set\(CPACK_PACKAGE_VERSION_MAJOR "3"\)' CMakeLists.txt
+grep -qE '^set\(CPACK_PACKAGE_VERSION_MINOR "34"\)' CMakeLists.txt
+grep -qE '^set\(CPACK_PACKAGE_VERSION_PATCH "12"\)' CMakeLists.txt
+
+# ---------------------------------------------------------------------------
+%build
+cd %{_builddir}/@QGIS_SOURCE_DIR_NAME@
+rm -rf build
+mkdir -p build
+cd build
+
+# 显式 cmake：不依赖 %cmake / %cmake_build 等 Fedora 专用 rpm 宏
+cmake .. \
+  -G "Unix Makefiles" \
+  -D CMAKE_BUILD_TYPE:STRING=Release \
+  -D CMAKE_INSTALL_PREFIX:PATH=/usr \
+  -D CMAKE_INSTALL_LIBDIR:STRING=@QGIS_LIBDIR@ \
+  -D CMAKE_CXX_STANDARD:STRING=17 \
+  -D CMAKE_CXX_STANDARD_REQUIRED:BOOL=ON \
+  -D CMAKE_C_FLAGS:STRING="@ISA_CFLAGS@" \
+  -D CMAKE_CXX_FLAGS:STRING="@ISA_CXXFLAGS@" \
+  -D QGIS_LIB_SUBDIR:STRING=@QGIS_LIBDIR@ \
+  -D QGIS_LIBEXEC_SUBDIR:STRING=@QGIS_LIBDIR@/qgis \
+  -D QGIS_PLUGIN_SUBDIR:STRING=@QGIS_LIBDIR@/qgis/plugins \
+  -D QGIS_DATA_SUBDIR:STRING=share/qgis \
+  -D QGIS_INCLUDE_SUBDIR:STRING=include/qgis \
+  -D QGIS_MANUAL_SUBDIR:STRING=share/man \
+  -D QGIS_CGIBIN_SUBDIR:STRING=bin \
+  -D BUILD_WITH_QT6:BOOL=FALSE \
+  -D WITH_CORE:BOOL=TRUE \
+  -D WITH_GUI:BOOL=TRUE \
+  -D WITH_ANALYSIS:BOOL=TRUE \
+  -D WITH_DESKTOP:BOOL=TRUE \
+  -D WITH_3D:BOOL=TRUE \
+  -D WITH_BINDINGS:BOOL=TRUE \
+  -D BINDINGS_GLOBAL_INSTALL:BOOL=TRUE \
+  -D SIP_GLOBAL_INSTALL:BOOL=FALSE \
+  -D WITH_QGIS_PROCESS:BOOL=TRUE \
+  -D WITH_QSCIAPI:BOOL=FALSE \
+  -D WITH_AUTH:BOOL=TRUE \
+  -D WITH_SERVER:BOOL=FALSE \
+  -D WITH_GRASS7:BOOL=FALSE \
+  -D WITH_GRASS8:BOOL=FALSE \
+  -D WITH_PDAL:BOOL=FALSE \
+  -D WITH_EPT:BOOL=FALSE \
+  -D WITH_COPC:BOOL=FALSE \
+  -D WITH_DRACO:BOOL=FALSE \
+  -D WITH_QTWEBKIT:BOOL=FALSE \
+  -D WITH_QTSERIALPORT:BOOL=FALSE \
+  -D WITH_QTGAMEPAD:BOOL=FALSE \
+  -D WITH_QUICK:BOOL=FALSE \
+  -D WITH_ORACLE:BOOL=FALSE \
+  -D WITH_HANA:BOOL=FALSE \
+  -D WITH_QSPATIALITE:BOOL=FALSE \
+  -D WITH_SPATIALITE:BOOL=TRUE \
+  -D WITH_POSTGRESQL:BOOL=TRUE \
+  -D WITH_GSL:BOOL=TRUE \
+  -D WITH_INTERNAL_MDAL:BOOL=TRUE \
+  -D WITH_INTERNAL_POLY2TRI:BOOL=TRUE \
+  -D WITH_INTERNAL_LAZPERF:BOOL=TRUE \
+  -D WITH_CUSTOM_WIDGETS:BOOL=FALSE \
+  -D WITH_CRASH_HANDLER:BOOL=FALSE \
+  -D WITH_ASTYLE:BOOL=FALSE \
+  -D USE_OPENCL:BOOL=FALSE \
+  -D USE_CCACHE:BOOL=FALSE \
+  -D QGIS_INSTALL_SYS_LIBS:BOOL=FALSE \
+  -D ENABLE_TESTS:BOOL=FALSE \
+  -D PEDANTIC:BOOL=FALSE \
+  -D WERROR:BOOL=FALSE
+
+make -j@BUILD_JOBS@
+
+# CMakeCache 是阶段 A 的证据；脚本会把它拷进 reports/
+test -f CMakeCache.txt
+grep -q '^WITH_3D:BOOL=TRUE' CMakeCache.txt
+grep -q '^WITH_BINDINGS:BOOL=TRUE' CMakeCache.txt
+grep -q '^WITH_DESKTOP:BOOL=TRUE' CMakeCache.txt
+echo "QGIS_STAGE_A_SOURCE_BUILD_OK"
+
+# ---------------------------------------------------------------------------
+%install
+cd %{_builddir}/@QGIS_SOURCE_DIR_NAME@
+rm -rf %{buildroot}
+make -C build DESTDIR=%{buildroot} install
+find %{buildroot} -type f -name '*.la' -delete || true
+
+# 3D 与 PyQGIS 是本工程的硬性交付项，缺失即打包失败
+test -n "$(find %{buildroot} -name 'libqgis_3d.so.*' -print -quit)" || \
+  { echo "FATAL: libqgis_3d.so.* 缺失，3D 未编入" >&2; exit 1; }
+test -n "$(find %{buildroot} -path '*/qgis/core/__init__.py' -print -quit)" || \
+  { echo "FATAL: 未找到 PyQGIS (qgis/core/__init__.py)，PyQGIS 绑定未编入" >&2; exit 1; }
+test -x "%{buildroot}/usr/bin/qgis" || \
+  { echo "FATAL: qgis desktop 主程序缺失" >&2; exit 1; }
+test -x "%{buildroot}/usr/bin/qgis_process" || \
+  { echo "FATAL: qgis_process 缺失" >&2; exit 1; }
+
+# 按真实安装树生成三个 %files 清单（避免猜测 QGIS 3.34.12 的文件集合）
+QGIS_BUILDROOT="%{buildroot}" \
+QGIS_OUTDIR="%{_builddir}" \
+QGIS_SITEARCH="@QGIS_PYTHON3_SITEARCH@" \
+QGIS_LIBSUBDIR="@QGIS_LIBDIR@" \
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+br = os.environ["QGIS_BUILDROOT"].rstrip("/")
+outdir = Path(os.environ["QGIS_OUTDIR"])
+site = os.environ["QGIS_SITEARCH"].rstrip("/")
+libsub = os.environ["QGIS_LIBSUBDIR"]
+
+paths, dirs = set(), set()
+for root, dnames, fnames in os.walk(br):
+    for d in dnames:
+        dirs.add((os.path.join(root, d))[len(br):] or "/")
+    for f in fnames:
+        paths.add((os.path.join(root, f))[len(br):])
+
+# 从实际安装树反推 PyQGIS 的 site-packages 前缀，不臆测 rpm 宏与 CMake 是否一致
+site_roots = set()
+for p in paths:
+    marker = "/qgis/core/__init__.py"
+    if p.endswith(marker):
+        site_roots.add(p[:-len(marker)])
+
+def classify(p):
+    base = os.path.basename(p)
+    if base.startswith("libqgispython.so"):
+        return "python"
+    if any(p.startswith(root + "/qgis") for root in site_roots):
+        return "python"
+    if p.startswith(site + "/qgis"):
+        return "python"
+    if p.startswith("/usr/share/qgis/python/") or p == "/usr/share/qgis/python":
+        return "python"
+    if p.startswith("/usr/include/qgis/") or base == "FindQGIS.cmake":
+        return "devel"
+    if base.endswith(".so"):
+        return "devel"
+    return "main"
+
+main, py, dev = [], [], []
+for p in sorted(paths):
+    q = '"' + p.replace('"', '\\"') + '"'
+    {"main": main, "python": py, "devel": dev}[classify(p)].append(q)
+
+owned_prefixes = (
+    "/usr/share/qgis",
+    "/usr/" + libsub + "/qgis",
+    "/usr/include/qgis",
+    site + "/qgis",
+) + tuple(root + "/qgis" for root in site_roots)
+for d in sorted(dirs):
+    if d == "/" or d.count("/") < 3:
+        continue
+    if any(d.startswith(pref) for pref in owned_prefixes):
+        main.append('%dir "' + d + '"')
+
+(outdir / "qgis-main.files").write_text("\n".join(main) + "\n", encoding="utf-8")
+(outdir / "qgis-python.files").write_text("\n".join(py) + "\n", encoding="utf-8")
+(outdir / "qgis-devel.files").write_text("\n".join(dev) + "\n", encoding="utf-8")
+print("filelist: main=%d python=%d devel=%d" % (len(main), len(py), len(dev)))
+PY
+
+echo "QGIS_STAGE_B_INSTALL_OK"
+
+%check
+# 单元测试在独立阶段执行（scripts/50-test-install.sh + VM），不在 rpmbuild 内跑：
+# QGIS 官方套件需要 Xvfb 与测试数据，会显著拉长 CI 且不代表目标系统运行能力。
+
+# ---------------------------------------------------------------------------
+%files -f %{_builddir}/qgis-main.files
+%license COPYING
+%doc README.md
+
+%files devel -f %{_builddir}/qgis-devel.files
+
+%files -n python3-qgis -f %{_builddir}/qgis-python.files
+
+# ---------------------------------------------------------------------------
+%post -p /sbin/ldconfig
+%postun -p /sbin/ldconfig
+%post -n python3-qgis -p /sbin/ldconfig
+%postun -n python3-qgis -p /sbin/ldconfig
+
+%changelog
+* Thu Nov 12 2026 QGIS Kylin CI <ci@example.invalid> - @QGIS_VERSION@-@QGIS_RELEASE@
+- Native Kylin V10 x86_64 RPM build of upstream QGIS tag final-3_34_12.
+- Qt5 / PyQGIS / 3D enabled; x86-64 baseline ISA; no Debian binaries bundled.

@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1.6
+# ============================================================================
+# QGIS 3.34.12 原生 Kylin V10 (Halberd) x86_64 构建镜像
+#
+# 关键约束：
+#   * KYLIN_BASE_IMAGE 必须是与目标机同版本的 Kylin V10 RPM 体系镜像（强烈建议带
+#     sha256 digest）。绝不使用 Ubuntu/Debian 基础镜像，也不做 alien/fpm 转换。
+#   * 所有依赖包名来自 config/deps.confirmed.env（在真实麒麟上探测所得），
+#     不在此文件里写死任何猜测的包名/版本。
+#   * 若 KYLIN_BASE_IMAGE 为空，docker build 会在 FROM 处报错；请先完成
+#     docs/CONFIRM.md 第 1 节并运行 scripts/00-preflight.sh。
+# ============================================================================
+ARG KYLIN_BASE_IMAGE
+FROM ${KYLIN_BASE_IMAGE} AS qgis-builder
+
+LABEL org.opencontainers.image.title="QGIS 3.34.12 Kylin V10 x86_64 native RPM builder" \
+      org.opencontainers.image.description="Native RPM build environment; no Debian binaries" \
+      qgis.version="3.34.12" \
+      qgis.tag="final-3_34_12" \
+      target.os="Kylin-Server-V10-Halberd" \
+      target.arch="x86_64" \
+      target.cpu="Hygon-C86-3G"
+
+ARG KYLIN_REPO_FILE_URL=""
+ARG KYLIN_EXTRA_REPO_URLS=""
+ARG QGIS_BUILD_JOBS=4
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    QGIS_BUILD_JOBS=${QGIS_BUILD_JOBS} \
+    RPM_BUILD_NCPUS=${QGIS_BUILD_JOBS} \
+    CCACHE_DIR=/root/.cache/ccache
+
+WORKDIR /opt/qgis-build
+COPY config/  /opt/qgis-build/config/
+COPY scripts/ /opt/qgis-build/scripts/
+COPY packaging/ /opt/qgis-build/packaging/
+COPY tests/  /opt/qgis-build/tests/
+COPY config/build.env docker/entrypoint.sh /opt/qgis-build/docker/
+
+RUN chmod +x /opt/qgis-build/scripts/*.sh /opt/qgis-build/scripts/*.py \
+             /opt/qgis-build/docker/entrypoint.sh && \
+    mkdir -p /opt/qgis-build/work /opt/qgis-build/out /opt/qgis-build/reports/logs
+
+# 只安装"已确认"的原生 RPM 依赖；依赖版本门槛由 check-deps.py 严格复核
+RUN KYLIN_REPO_FILE_URL="${KYLIN_REPO_FILE_URL}" \
+    KYLIN_EXTRA_REPO_URLS="${KYLIN_EXTRA_REPO_URLS}" \
+    bash /opt/qgis-build/scripts/install-builddeps.sh
+
+ENTRYPOINT ["/opt/qgis-build/docker/entrypoint.sh"]
+CMD ["build"]

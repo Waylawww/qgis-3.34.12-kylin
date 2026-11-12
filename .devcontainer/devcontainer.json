@@ -1,0 +1,56 @@
+{
+  "name": "QGIS 3.34.12 / Kylin V10 / Hygon C86 builder",
+  "build": {
+    "dockerfile": "../docker/Dockerfile.kylin",
+    "context": "..",
+    "args": {
+      "KYLIN_BASE_IMAGE": "${localEnv:KYLIN_BASE_IMAGE}",
+      "KYLIN_REPO_FILE_URL": "${localEnv:KYLIN_REPO_FILE_URL}",
+      "KYLIN_EXTRA_REPO_URLS": "${localEnv:KYLIN_EXTRA_REPO_URLS}",
+      "QGIS_BUILD_JOBS": "${localEnv:QGIS_BUILD_JOBS}"
+    }
+  },
+  "initializeCommand": "bash scripts/devcontainer-init.sh",
+  "remoteUser": "root",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/qgis-kylin,type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/qgis-kylin",
+  "containerEnv": {
+    "REPO_ROOT": "/workspaces/qgis-kylin",
+    "WORK_DIR": "/workspaces/qgis-kylin/work",
+    "OUT_DIR": "/workspaces/qgis-kylin/out",
+    "REPORT_DIR": "/workspaces/qgis-kylin/reports",
+    "QT_QPA_PLATFORM": "offscreen",
+    "QGIS_PREFIX_PATH": "/usr"
+  },
+  "mounts": [
+    "source=qgis-ccache,target=/root/.cache/ccache,type=volume",
+    "source=qgis-dnf-cache,target=/var/cache/dnf,type=volume"
+  ],
+  "postCreateCommand": "bash scripts/devcontainer-postcreate.sh",
+  "forwardPorts": [5900, 2222],
+  "hostRequirements": {
+    "cpus": 8,
+    "memory": "32gb",
+    "storage": "128gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "redhat.vscode-yaml",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "cmake.sourceDirectory": "${workspaceFolder}/work/src/QGIS"
+      }
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true
+    }
+  }
+}

@@ -1,0 +1,125 @@
+name: Probe Kylin V10 dependency matrix
+
+# 用途：在没有麒麟物理机的情况下，云端用「真实麒麟 V10 基础镜像 + 真实软件源」
+# 解析出 QGIS 3.34.12 所需的原生 RPM 包名与版本，生成：
+#   config/kylin.confirmed.env / config/deps.confirmed.env
+#   packaging/generated/buildrequires.inc / runtime-requires.inc
+#   reports/dependency-matrix.json
+# 下载产物、人工审阅后提交入库，再运行 build.yml。
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: 'Kylin V10 x86_64 基础镜像（建议带 @sha256 digest）'
+        required: true
+        default: ''
+      repo_file_url:
+        description: '可选：麒麟官方 .repo 文件 URL'
+        required: false
+        default: ''
+      extra_repos:
+        description: '可选：逗号分隔的额外 .repo URL（依赖叠加源）'
+        required: false
+        default: ''
+      allow_unverified:
+        description: '存在未解析依赖时是否仍上传报告（用于诊断）'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KYLIN_BASE_IMAGE: ${{ inputs.base_image }}
+      KYLIN_REGISTRY: ${{ vars.KYLIN_REGISTRY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登录镜像仓库（如已配置）
+        if: ${{ vars.KYLIN_REGISTRY != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.KYLIN_REGISTRY }}
+          username: ${{ secrets.KYLIN_REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.KYLIN_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: 构建探测镜像
+        run: |
+          docker build --progress=plain \
+            --build-arg "KYLIN_BASE_IMAGE=${KYLIN_BASE_IMAGE}" \
+            -f docker/Dockerfile.probe -t qgis-kylin-probe:latest .
+
+      - name: 在麒麟原生环境中探测依赖
+        run: |
+          mkdir -p config packaging/generated reports
+          chmod -R a+rwX config packaging/generated reports
+          set +e
+          docker run --rm --entrypoint bash \
+            -v "${PWD}:/out" \
+            -e "KYLIN_REPO_FILE_URL=${{ inputs.repo_file_url }}" \
+            -e "KYLIN_EXTRA_REPO_URLS=${{ inputs.extra_repos }}" \
+            qgis-kylin-probe:latest -lc '
+              set -o pipefail
+              if [ -n "$KYLIN_REPO_FILE_URL" ]; then
+                curl -fsSL "$KYLIN_REPO_FILE_URL" -o /etc/yum.repos.d/kylin-ci.repo || true
+              fi
+              echo "=== /etc/os-release ==="; cat /etc/os-release
+              echo "=== repo list ==="
+              (dnf -q repolist || yum -q repolist) 2>&1 || true
+              python3 /opt/qgis-build/scripts/probe-kylin.py --write \
+                ${{ inputs.allow_unverified && '--allow-unverified' || '' }}
+              rc=$?
+              mkdir -p /out/config /out/packaging/generated /out/reports
+              cp -f /opt/qgis-build/config/*.confirmed.env /out/config/ 2>/dev/null || true
+              cp -f /opt/qgis-build/packaging/generated/*.inc /out/packaging/generated/ 2>/dev/null || true
+              cp -f /opt/qgis-build/reports/dependency-matrix.json /out/reports/ 2>/dev/null || true
+              exit $rc
+            '
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "${{ inputs.allow_unverified }}" != "true" ]; then
+            echo "依赖探测未通过，详见 reports/dependency-matrix.json 与 docs/CONFIRM.md" >&2
+            exit "$rc"
+          fi
+
+      - name: 输出结论摘要
+        run: |
+          python3 - <<'PY'
+          import json, os
+          p = "reports/dependency-matrix.json"
+          if not os.path.exists(p):
+              print("未生成 dependency-matrix.json"); raise SystemExit(1)
+          d = json.load(open(p, encoding="utf-8"))
+          print("verdict      :", d["verdict"])
+          print("OS           :", d["system"]["KYLIN_OS_PRETTY_NAME"])
+          print("kernel       :", d["system"]["KYLIN_KERNEL"])
+          print("glibc        :", d["system"]["KYLIN_GLIBC"])
+          print("gcc          :", d["system"]["KYLIN_GCC"])
+          print("libdir       :", d["system"]["KYLIN_MACRO_LIBDIR"])
+          print("sitearch     :", d["system"]["KYLIN_PYTHON3_SITEARCH"])
+          print("unresolved   :", d["unresolved_required"])
+          print("too old      :", d["version_failures"])
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("## Kylin V10 依赖探测\n\n")
+              f.write(f"- verdict: **{d['verdict']}**\n")
+              f.write(f"- unresolved: `{d['unresolved_required']}`\n")
+              f.write(f"- version too old: `{d['version_failures']}`\n")
+              f.write("- 若解析结果非空，请下载 artifact 并把 `config/*.confirmed.env`、"
+                      "`packaging/generated/*.inc` 提交入库后运行 build.yml。\n")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kylin-dependency-matrix
+          path: |
+            config/*.confirmed.env
+            packaging/generated/*.inc
+            reports/dependency-matrix.json
+          if-no-files-found: warn
