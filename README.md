@@ -14,7 +14,7 @@
 
 | # | 待确认参数 | 为什么不能猜 |
 |---|---|---|
-| 1 | `KYLIN_BASE_IMAGE` + digest | Kylin V10 是商业发行版，公开 Docker Hub 上通常**没有**可合法拉取的官方镜像；必须用私有/GHCR 镜像，或从官方 ISO 生成 rootfs（`scripts/bootstrap/10-make-rootfs.sh`） |
+| 1 | `KYLIN_BASE_IMAGE` + digest | Kylin V10 是商业发行版，公开 Docker Hub 上通常**没有**可合法拉取的官方镜像；必须用私有/GHCR 镜像，或从官方 ISO 生成 rootfs（`scripts/bootstrap/10-make-rootfs.sh`），也可从已安装麒麟主机的 DNF 仓库生成（`scripts/bootstrap/20-make-rootfs-from-host-repos.sh`） |
 | 2 | 麒麟软件源 `.repo` URL / repo id / GPG key / 是否含 EPOL、Update、PowerTools，以及 Actions runner 是否可达 | 商业源常有授权与白名单，URL 与 gpgkey 无法虚构 |
 | 3 | 各依赖在麒麟源里的**真实 RPM 包名**与**真实版本** | `config/capabilities.tsv` 里是 QGIS 官方 Fedora 表的**候选名**，不是麒麟包名；由 `probe-kylin.py` 用 `repoquery --whatprovides` 实测解析 |
 | 4 | 麒麟源是否能满足官方下限：**Qt>=5.14 / PROJ>=7.2 / GEOS>=3.9 / GDAL>=3.2**（以及 Qt5 3D 开发包、SIP/PyQt5/Qsci） | Kylin V10 内核 4.19、用户态偏旧，很可能不满足；若不满足必须建立"麒麟原生工具链产出的依赖叠加 RPM 仓库"，**禁止**用 Ubuntu 二进制或降 QGIS 版本 |
@@ -87,7 +87,8 @@
 │   ├── build-all.sh                   # 容器内一键 00→40
 │   ├── devcontainer-init.sh / devcontainer-postcreate.sh
 │   ├── ci-free-space.sh               # runner 磁盘清理
-│   └── bootstrap/10-make-rootfs.sh    # 官方 ISO → rootfs（兜底）
+│   ├── bootstrap/10-make-rootfs.sh    # 官方 ISO → rootfs（兜底）
+│   └── bootstrap/20-make-rootfs-from-host-repos.sh # 已安装麒麟主机 + DNF → rootfs
 ├── tests/
 │   ├── pyqgis_smoke.py                # 离屏 PyQGIS 地图渲染测试
 │   ├── cloud-init/{user-data,meta-data}.tpl
