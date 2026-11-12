@@ -17,14 +17,19 @@
 | `KYLIN_BASE_IMAGE_DIGEST` | `sha256:...`，用于可复现构建 | 同上 |
 | glibc / gcc / rpm 版本 | 决定 GLIBC 符号上限与 C++17 能力 | 容器内 `ldd --version`、`gcc -dumpfullversion -dumpversion`、`rpm --version` |
 
-**已知风险**：Kylin V10 属于商业发行版，公开 Docker Hub 上通常**没有**可合法拉取的官方镜像。
-本工程提供两条路径：
+**已知风险**：Kylin V10 属于商业发行版，公开 Docker Hub 上的第三方镜像不能自动视为官方、完整或适用于当前目标版本。
 
-- **路径 A（推荐）**：由你方提供私有/GHCR 镜像，填入 `KYLIN_BASE_IMAGE`（必须为 RPM/dnf 体系）。
-- **路径 B（兜底）**：用官方 ISO 生成 rootfs：
-  `scripts/bootstrap/10-make-rootfs.sh` → `docker/Dockerfile.bootstrap` → push 私有仓库。
-  该脚本会打印 ISO 内实际发现的 `repodata` 目录，不假设 `BaseOS/AppStream` 布局；
-  最小包集合与 `--repofrompath` 需按实际 ISO 调整，**此路径不保证一次成功**。
+本工程提供三条路径：
+
+- **路径 A（最省事）**：由你方提供可信的 Kylin V10 x86_64 私有/GHCR 镜像，锁定 digest。
+- **路径 B（有 ISO 时）**：`scripts/bootstrap/10-make-rootfs.sh` → `docker/Dockerfile.bootstrap`。脚本从 ISO 的 RPM 仓库创建 rootfs。
+- **路径 C（没有 ISO、但已有麒麟 V10 主机时，推荐）**：在该主机上执行
+  `sudo bash scripts/bootstrap/20-make-rootfs-from-host-repos.sh`，通过主机已配置的 DNF 仓库和
+  `dnf --installroot` 安装最小 rootfs，再用 `docker/Dockerfile.bootstrap` 制作镜像。
+  默认不把主机 repo 文件复制进镜像，避免把凭据带入镜像；只有确认 repo 文件不含账号、密码、Token
+  或客户端证书配置时，才考虑 `KEEP_REPO_CONFIG=1`。本地文件型 repo 还需确保容器构建时能访问对应挂载路径。
+
+路径 C 需要主机已有可用的 DNF 软件源；它不要求 ISO，也不要求新增软件源。
 
 > 严禁使用 Ubuntu/Fedora 镜像编译后 `alien`/`fpm` 转 RPM：
 > glibc、Qt、PROJ/GDAL ABI 与麒麟不一致，即使能装上也无法运行。
