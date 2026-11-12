@@ -56,34 +56,53 @@ jobs:
             -f docker/Dockerfile.probe -t qgis-kylin-probe:latest .
 
       - name: 在麒麟原生环境中探测依赖
+        env:
+          KYLIN_REPO_FILE_URL: ${{ inputs.repo_file_url }}
+          KYLIN_EXTRA_REPO_URLS: ${{ inputs.extra_repos }}
+          ALLOW_UNVERIFIED: ${{ inputs.allow_unverified }}
         run: |
           mkdir -p config packaging/generated reports
           chmod -R a+rwX config packaging/generated reports
           set +e
           docker run --rm --entrypoint bash \
             -v "${PWD}:/out" \
-            -e "KYLIN_REPO_FILE_URL=${{ inputs.repo_file_url }}" \
-            -e "KYLIN_EXTRA_REPO_URLS=${{ inputs.extra_repos }}" \
+            -e KYLIN_REPO_FILE_URL \
+            -e KYLIN_EXTRA_REPO_URLS \
+            -e ALLOW_UNVERIFIED \
             qgis-kylin-probe:latest -lc '
-              set -o pipefail
+              set -euo pipefail
               if [ -n "$KYLIN_REPO_FILE_URL" ]; then
-                curl -fsSL "$KYLIN_REPO_FILE_URL" -o /etc/yum.repos.d/kylin-ci.repo || true
+                curl -fsSL "$KYLIN_REPO_FILE_URL" -o /etc/yum.repos.d/kylin-ci.repo
+              fi
+              if [ -n "$KYLIN_EXTRA_REPO_URLS" ]; then
+                IFS=',' read -r -a extra_urls <<< "$KYLIN_EXTRA_REPO_URLS"
+                i=0
+                for url in "${extra_urls[@]}"; do
+                  [ -n "$url" ] || continue
+                  i=$((i + 1))
+                  curl -fsSL "$url" -o "/etc/yum.repos.d/qgis-extra-${i}.repo"
+                done
               fi
               echo "=== /etc/os-release ==="; cat /etc/os-release
               echo "=== repo list ==="
-              (dnf -q repolist || yum -q repolist) 2>&1 || true
-              python3 /opt/qgis-build/scripts/probe-kylin.py --write \
-                ${{ inputs.allow_unverified && '--allow-unverified' || '' }}
+              (dnf -q repolist || yum -q repolist)
+              probe_args=()
+              if [ "$ALLOW_UNVERIFIED" = "true" ]; then
+                probe_args+=(--allow-unverified)
+              fi
+              set +e
+              python3 /opt/qgis-build/scripts/probe-kylin.py --write "${probe_args[@]}"
               rc=$?
+              set -e
               mkdir -p /out/config /out/packaging/generated /out/reports
               cp -f /opt/qgis-build/config/*.confirmed.env /out/config/ 2>/dev/null || true
               cp -f /opt/qgis-build/packaging/generated/*.inc /out/packaging/generated/ 2>/dev/null || true
               cp -f /opt/qgis-build/reports/dependency-matrix.json /out/reports/ 2>/dev/null || true
-              exit $rc
+              exit "$rc"
             '
           rc=$?
           set -e
-          if [ "$rc" -ne 0 ] && [ "${{ inputs.allow_unverified }}" != "true" ]; then
+          if [ "$rc" -ne 0 ] && [ "$ALLOW_UNVERIFIED" != "true" ]; then
             echo "依赖探测未通过，详见 reports/dependency-matrix.json 与 docs/CONFIRM.md" >&2
             exit "$rc"
           fi
