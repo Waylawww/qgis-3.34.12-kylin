@@ -90,12 +90,12 @@ grep -q 'QGIS_PY_SITE' "$FIND_PYQT5" \
 # 显式关掉麒麟主机上没有的可选依赖：GRASS / spatialite / PDAL / EPT / COPC /
 # Draco / QtWebKit / QtSerialPort。3D、Desktop、PyQGIS、qgis_process 保持开启。
 
-# QGIS 链接的 Protobuf 库名是开发期链接名（libprotobuf.so / libprotobuf-lite.so
-# / libprotoc.so）。麒麟的 protobuf-devel 只提供了 libprotobuf.so，lite 与 protoc
-# 的链接名往往缺失，磁盘上只有版本化文件 libXXX.so.N；ninja 链接时会报
-# "...libprotobuf-lite.so, missing and no known rule to make it"。这里补齐这些
-# 链接名（指向已存在的版本化文件），CMake 变量即可对上。
-for _pb in libprotobuf libprotobuf-lite libprotoc; do
+# QGIS 链接的库名是开发期链接名（libXXX.so），但麒麟的 *-devel 常常只提供
+# 这个链接名、或连它都没有，磁盘上实际只有版本化文件 libXXX.so.N（运行时 RPM
+# 提供）。ninja 链接时会报 "...libXXX.so, missing and no known rule to make it"。
+# 这里为所有需要的库补齐 libXXX.so 链接名（指向已存在的版本化文件），CMake
+# 变量即可对上。实测踩过：libprotobuf-lite.so、libprotoc.so、libexpat.so。
+for _pb in libprotobuf libprotobuf-lite libprotoc libexpat; do
   _link="${SYSROOT}/usr/lib64/${_pb}.so"
   if [[ ! -e "$_link" ]]; then
     _ver="$(ls -v "${SYSROOT}/usr/lib64/${_pb}.so".* 2>/dev/null \
@@ -103,6 +103,12 @@ for _pb in libprotobuf libprotobuf-lite libprotoc; do
     [[ -n "$_ver" ]] && ln -sf "$(basename "$_ver")" "$_link"
   fi
 done
+
+# EXPAT：显式给出头文件与库路径，避免 FindEXPAT 在某些 deps 状态下找不到。
+_expat_inc="$SYSROOT/usr/include"
+[[ -f "$_expat_inc/expat.h" ]] || _expat_inc="/usr/include"
+_expat_lib="$SYSROOT/usr/lib64/libexpat.so"
+[[ -e "$_expat_lib" ]] || _expat_lib="/usr/lib64/libexpat.so"
 
 rm -rf "$QGIS_BUILD"
 set -o pipefail
@@ -139,6 +145,8 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DProtobuf_LITE_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf-lite.so" \
   -DProtobuf_PROTOC_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotoc.so" \
   -DProtobuf_PROTOC_EXECUTABLE:FILEPATH="${SYSROOT}/usr/bin/protoc" \
+  -DEXPAT_INCLUDE_DIR:PATH="$_expat_inc" \
+  -DEXPAT_LIBRARY:FILEPATH="$_expat_lib" \
   2>&1 | tee "${LOG}/qgis-cmake.log"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \
@@ -168,7 +176,8 @@ if [[ -d "${SYSROOT}/usr/lib64" ]]; then
   find "${SYSROOT}/usr/lib64" -maxdepth 1 \
     \( -name 'libprotobuf.so.*' -o -name 'libprotobuf-lite.so.*' \
        -o -name 'libprotoc.so.*' \
-       -o -name 'libgsl.so.*' -o -name 'libgslcblas.so.*' \) \
+       -o -name 'libgsl.so.*' -o -name 'libgslcblas.so.*' \
+       -o -name 'libexpat.so.*' \) \
     -exec cp -a {} "${DEPS_STAGE}/lib/" \;
 fi
 # SIP/PyQt5 的 Python 包
