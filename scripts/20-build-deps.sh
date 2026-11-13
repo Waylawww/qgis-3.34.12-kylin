@@ -320,7 +320,7 @@ setup_flags
 # 结果 dep_pyqt5 仍然拿到 SIP4 的 sipgen，必然再次失败。这里按"能否 import
 # sipbuild/pyqtbuild"判断真实状态，而不是只看 stamp。
 if [[ -f "$STAMPS/sip.ok" ]] && \
-   ! python3 -c 'import sipbuild, pyqtbuild' >/dev/null 2>&1; then
+   ! python3 -c 'import sipbuild, pyqtbuild; from sipbuild.version import SIP_VERSION_STR' >/dev/null 2>&1; then
   log "D0: 检测到旧 SIP4 安装，清理 stamp 与产物，切换到 SIP6"
   rm -f "$STAMPS/sip.ok" "$STAMPS/pyqt5.ok"
   rm -f "$DEPS_PREFIX/bin/sip" "$DEPS_PREFIX/bin/sip-build" \
@@ -495,11 +495,20 @@ dep_sip() {
   mkdir -p "$WHL_DIR" "$PY_SITE" "$DEPS_PREFIX/bin"
   fetch "$WHL_DIR/$SIP_WHEEL" "${SIP_URLS[@]}" || return 1
   fetch "$WHL_DIR/$PYQT_BUILDER_WHEEL" "${PYQT_BUILDER_URLS[@]}" || return 1
+  # sip 6.7.12 / PyQt-builder 1.14.0 的 Requires-Dist（packaging / ply /
+  # tomli / setuptools）必须一并装进私有 PY_SITE：麒麟自带 packaging 没有
+  # packaging/markers.py，第四轮就是这里让 `import sipbuild` 失败的。
+  fetch "$WHL_DIR/$PACKAGING_WHEEL" "${PACKAGING_URLS[@]}" || return 1
+  fetch "$WHL_DIR/$PLY_WHEEL" "${PLY_URLS[@]}" || return 1
+  fetch "$WHL_DIR/$TOMLI_WHEEL" "${TOMLI_URLS[@]}" || return 1
+  fetch "$WHL_DIR/$SETUPTOOLS_WHEEL" "${SETUPTOOLS_URLS[@]}" || return 1
   # pip --target 把 sipbuild / pyqtbuild 与 dist-info 装进私有 PY_SITE，
   # 不写 /usr、不需要 sudo。刻意不走 PEP517：sipbuild/api.py 没有
   # prepare_metadata_for_build_wheel，pip 20.2.2 会直接报错。
   python3 -m pip install --no-cache-dir --no-deps --upgrade --target "$PY_SITE" \
-    "$WHL_DIR/$SIP_WHEEL" "$WHL_DIR/$PYQT_BUILDER_WHEEL" || return 1
+    "$WHL_DIR/$SIP_WHEEL" "$WHL_DIR/$PYQT_BUILDER_WHEEL" \
+    "$WHL_DIR/$PACKAGING_WHEEL" "$WHL_DIR/$PLY_WHEEL" \
+    "$WHL_DIR/$TOMLI_WHEEL" "$WHL_DIR/$SETUPTOOLS_WHEEL" || return 1
   # QGIS cmake/FindSIP.cmake 的 SIP>=5 分支 FIND_PROGRAM(sip-build)，
   # cmake/SIPMacros.cmake 也直接调 sip-build，必须在 $DEPS_PREFIX/bin 里。
   # 固定写 wrapper，不依赖 pip 生成 scripts 的位置。
@@ -512,9 +521,11 @@ EOF
 exec python3 -c 'import sys; from sipbuild.tools.install import main; sys.exit(main())' "$@"
 EOF
   chmod 755 "$DEPS_PREFIX/bin/sip-build" "$DEPS_PREFIX/bin/sip-install"
+  # 必须严格短路：run_dep 在 if 子 shell 里调用，set -e 不会中止函数体，
+  # 上一轮这里 import 失败却仍返回 0，把不可用的 SIP 记成了 OK。
   PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'import sipbuild, pyqtbuild; print("SIP", sipbuild.version.SIP_VERSION_STR)'
-  [[ -x "$DEPS_PREFIX/bin/sip-build" ]]
+    'import sipbuild, pyqtbuild, packaging, ply, tomli, setuptools; from sipbuild.version import SIP_VERSION_STR; print("SIP", SIP_VERSION_STR)' || return 1
+  [[ -x "$DEPS_PREFIX/bin/sip-build" ]] || return 1
 }
 
 dep_pyqt5() {
@@ -522,7 +533,7 @@ dep_pyqt5() {
     pyproject.toml project.py sip/QtCore/QtCoremod.sip || return 1
   qmake_ready || return 1
   if ! PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-       'import sipbuild, pyqtbuild' >/dev/null 2>&1; then
+       'import sipbuild, pyqtbuild; from sipbuild.version import SIP_VERSION_STR' >/dev/null 2>&1; then
     warn "  SIP6/PyQt-builder 未就绪（dep_sip 必须先成功）"
     return 1
   fi
