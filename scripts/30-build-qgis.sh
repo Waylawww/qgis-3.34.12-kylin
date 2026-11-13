@@ -301,6 +301,43 @@ PY
   log "3D VPC 已知缺陷补丁完成（WITH_COPC=OFF，裁掉 qgsvirtualpointcloudentity）"
 fi
 
+# --- QGIS 3.34 测试缺陷：WITH_SPATIALITE=OFF 时 virtiallayer 测试链接失败 ----
+# src/providers/CMakeLists.txt 里 virtual 提供者是 if (WITH_SPATIALITE) 才
+# add_subdirectory 的，但 tests/src/providers/CMakeLists.txt 无条件链接
+# provider_virtuallayer_a，于是 run 65 在链接测试时报：
+#   /usr/bin/ld: 找不到 -lprovider_virtuallayer_a
+# 我们本来就不需要测试，但既然 ENABLE_TESTS 默认开、其它测试都已编译，
+# 这里只按上游语义把这个用不到的测试一起放进 WITH_SPATIALITE 条件里，
+# 避免因为一个死测试把整条流水线卡住。
+if ! printf '%s\n' "${CMAKE_ARGS[@]}" | grep -q 'WITH_SPATIALITE:BOOL=ON'; then
+  python3 - "$QGIS_SRC" <<'PY'
+import os
+import sys
+
+path = os.path.join(sys.argv[1], 'tests/src/providers/CMakeLists.txt')
+src = open(path, encoding='utf-8').read()
+if 'QGIS_KYLIN_NO_SPATIALITE' in src:
+    print('tests/src/providers/CMakeLists.txt 补丁已存在')
+else:
+    needle = ('add_qgis_test(testqgsvirtuallayerprovider.cpp MODULE provider '
+              'LINKEDLIBRARIES provider_virtuallayer_a qgis_core)\n')
+    if needle not in src:
+        sys.exit('ERROR: tests/src/providers/CMakeLists.txt 里找不到 virtuallayer 测试')
+    guarded = (
+        '# QGIS_KYLIN_NO_SPATIALITE: src/providers/virtual 只在 WITH_SPATIALITE=ON 时\n'
+        '# 才加入构建，这里却无条件链接 provider_virtuallayer_a。\n'
+        'if (WITH_SPATIALITE)\n'
+        '  ' + needle +
+        'endif()\n'
+    )
+    open(path, 'w', encoding='utf-8').write(src.replace(needle, guarded, 1))
+    print('已给 tests/src/providers/CMakeLists.txt 打补丁')
+PY
+  grep -q 'QGIS_KYLIN_NO_SPATIALITE' "$QGIS_SRC/tests/src/providers/CMakeLists.txt" \
+    || die "virtuallayer 测试补丁失败"
+  log "virtuallayer 测试已随 WITH_SPATIALITE=OFF 一起跳过"
+fi
+
 # 配置签名：参数不变就复用已有构建目录，保留增量编译结果。
 # QGIS 全量编译即使 -j8 也要 2~3 小时；安装 / rpmbuild 阶段失败时不该从头再编。
 _cfg_sig="$(printf '%s\n' "${CMAKE_ARGS[@]}" | sha256sum | awk '{print $1}')"
