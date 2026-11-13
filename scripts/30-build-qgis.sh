@@ -192,11 +192,9 @@ else
 fi
 log "前置修正完成，开始 CMake 配置（完整日志: ${LOG}/qgis-cmake.log）"
 
-rm -rf "$QGIS_BUILD"
-set -o pipefail
-cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
-  -DCMAKE_BUILD_TYPE:STRING=Release \
-  -DCMAKE_INSTALL_PREFIX:PATH="$PREFIX_IN_RPM" \
+CMAKE_ARGS=(
+  -DCMAKE_BUILD_TYPE:STRING=Release
+  -DCMAKE_INSTALL_PREFIX:PATH="$PREFIX_IN_RPM"
   -DCMAKE_INSTALL_LIBDIR:STRING=lib \
   -DCMAKE_PREFIX_PATH:PATH="${DEPS_PREFIX};${SYSROOT}/usr" \
   -DCMAKE_INSTALL_RPATH:STRING="${PREFIX_IN_RPM}/lib;${DEPS_IN_RPM}/lib;${DEPS_IN_RPM}/lib64" \
@@ -222,9 +220,25 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DQMAKE_EXECUTABLE:FILEPATH="${DEPS_PREFIX}/bin/qmake" \
   -DPYQT5_MOD_DIR:PATH="$PY_SITE/PyQt5" \
   -DPYQT5_SIP_DIR:PATH="$PY_SITE/PyQt5/bindings" \
-  ${PROTOBUF_HINTS[@]+"${PROTOBUF_HINTS[@]}"} \
-  ${EXPAT_HINTS[@]+"${EXPAT_HINTS[@]}"} \
+)
+CMAKE_ARGS+=( ${PROTOBUF_HINTS[@]+"${PROTOBUF_HINTS[@]}"} ${EXPAT_HINTS[@]+"${EXPAT_HINTS[@]}"} )
+
+# 配置签名：参数不变就复用已有构建目录，保留增量编译结果。
+# QGIS 全量编译即使 -j8 也要 2~3 小时；安装 / rpmbuild 阶段失败时不该从头再编。
+_cfg_sig="$(printf '%s\n' "${CMAKE_ARGS[@]}" | sha256sum | awk '{print $1}')"
+if [[ -f "${QGIS_BUILD}/CMakeCache.txt" && -f "${QGIS_BUILD}/.cfg-sig" \
+      && "$(cat "${QGIS_BUILD}/.cfg-sig" 2>/dev/null)" == "$_cfg_sig" ]]; then
+  log "复用构建目录 ${QGIS_BUILD}（cmake 参数签名一致），保留增量编译"
+else
+  log "全新配置 ${QGIS_BUILD}（首次配置或 cmake 参数发生变化）"
+  rm -rf "$QGIS_BUILD"
+fi
+
+set -o pipefail
+cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
+  "${CMAKE_ARGS[@]}" \
   2>&1 | tee "${LOG}/qgis-cmake.log"
+printf '%s\n' "$_cfg_sig" > "${QGIS_BUILD}/.cfg-sig"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \
   "${QGIS_BUILD}/CMakeCache.txt" | tee "${REPORT_DIR}/cmake-options.txt" || true
