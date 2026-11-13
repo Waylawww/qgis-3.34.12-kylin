@@ -64,10 +64,25 @@ export LDFLAGS="-L${DEPS_PREFIX}/lib -L${DEPS_PREFIX}/lib64 -L${SYSROOT}/usr/lib
 # 改用环境变量把探测路径指到私有 site-packages（补丁幂等）。
 export QGIS_PY_SITE="$PY_SITE"
 FIND_PYQT5="${QGIS_SRC}/cmake/FindPyQt5.cmake"
-if [[ -f "$FIND_PYQT5" ]] && ! grep -q 'QGIS_PY_SITE' "$FIND_PYQT5"; then
-  sed -i 's|${Python_SITEARCH}|$ENV{QGIS_PY_SITE}|g' "$FIND_PYQT5"
-  log "FindPyQt5.cmake 的 SIP>=5 探测路径已改到 $PY_SITE"
-fi
+[[ -f "$FIND_PYQT5" ]] || die "缺 QGIS CMake 模块: $FIND_PYQT5"
+# 用纯字符串替换而不是 sed：${Python_SITEARCH} / $ENV{...} 里的 $ 和 { }
+# 在 sed 正则/替换串里语义容易出错，Python 直替最稳。补丁幂等。
+python3 - "$FIND_PYQT5" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as f:
+    src = f.read()
+needle = '${Python_SITEARCH}'
+replacement = '$ENV{QGIS_PY_SITE}'
+if 'QGIS_PY_SITE' in src:
+    print('FindPyQt5.cmake 补丁已存在')
+elif needle not in src:
+    print('WARN: FindPyQt5.cmake 里没有 ${Python_SITEARCH}')
+else:
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(src.replace(needle, replacement))
+    print('已替换 %d 处探测路径' % src.count(needle))
+PY
 grep -q 'QGIS_PY_SITE' "$FIND_PYQT5" \
   || die "FindPyQt5.cmake 补丁失败: $FIND_PYQT5"
 
