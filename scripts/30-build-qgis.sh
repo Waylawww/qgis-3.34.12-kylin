@@ -89,6 +89,21 @@ grep -q 'QGIS_PY_SITE' "$FIND_PYQT5" \
 # --- CMake 配置 -------------------------------------------------------------
 # 显式关掉麒麟主机上没有的可选依赖：GRASS / spatialite / PDAL / EPT / COPC /
 # Draco / QtWebKit / QtSerialPort。3D、Desktop、PyQGIS、qgis_process 保持开启。
+
+# QGIS 链接的 Protobuf 库名是开发期链接名（libprotobuf.so / libprotobuf-lite.so
+# / libprotoc.so）。麒麟的 protobuf-devel 只提供了 libprotobuf.so，lite 与 protoc
+# 的链接名往往缺失，磁盘上只有版本化文件 libXXX.so.N；ninja 链接时会报
+# "...libprotobuf-lite.so, missing and no known rule to make it"。这里补齐这些
+# 链接名（指向已存在的版本化文件），CMake 变量即可对上。
+for _pb in libprotobuf libprotobuf-lite libprotoc; do
+  _link="${SYSROOT}/usr/lib64/${_pb}.so"
+  if [[ ! -e "$_link" ]]; then
+    _ver="$(ls -v "${SYSROOT}/usr/lib64/${_pb}.so".* 2>/dev/null \
+            | grep -E '\.so\.[0-9]+$' | tail -1)"
+    [[ -n "$_ver" ]] && ln -sf "$(basename "$_ver")" "$_link"
+  fi
+done
+
 rm -rf "$QGIS_BUILD"
 set -o pipefail
 cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
