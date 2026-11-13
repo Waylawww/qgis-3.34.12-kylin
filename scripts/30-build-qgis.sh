@@ -126,7 +126,19 @@ for _pb in libprotobuf libprotobuf-lite libprotoc libexpat; do
       warn "补链接名失败: ${_link}（权限或目标目录缺失）"
     fi
   else
-    warn "sysroot 缺 ${_pb}.so 与 ${_pb}.so.N，跳过补链接名（若 QGIS 真的链接它，ninja 会明确报错）"
+    # 麒麟/银河麒麟 V10 自带的 protobuf 运行时 RPM 只有 libprotobuf.so.25 与
+    # libprotoc.so.25，没有 libprotobuf-lite。但 QGIS 的 qgis_core 无条件链接
+    # Protobuf_LITE_LIBRARY，缺它 CMake 在 generate 阶段就报
+    # "Protobuf_LITE_LIBRARY ... set to NOTFOUND"（实测 run 56）。
+    # lite 运行时是完整库的子集（同一批源码，符号完全包含在 libprotobuf 里），
+    # 所以退化为链接完整库：编译/链接/运行都成立，DT_NEEDED 记录
+    # libprotobuf.so.25，正是 RPM 里已经打包的那一份。
+    if [[ "$_pb" == libprotobuf-lite && -e "${SYSROOT}/usr/lib64/libprotobuf.so" ]]; then
+      ln -sf libprotobuf.so "$_link"
+      warn "sysroot 无 libprotobuf-lite.so*，改用 libprotobuf.so 顶替（lite 是 full 的子集）"
+    else
+      warn "sysroot 缺 ${_pb}.so 与 ${_pb}.so.N，跳过补链接名（若 QGIS 真的链接它，ninja 会明确报错）"
+    fi
   fi
 done
 
