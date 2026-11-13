@@ -80,7 +80,7 @@ detect_gcc_runtime() {
 # shared library 时会报 "relocation R_X86_64_PC32 ... recompile with -fPIC"。
 # 有同名 .so 时删掉 .a；再把解压后断链的 .so 指向系统真实运行时库。
 fixup_sysroot_libs() {
-  local libdir="$SYSROOT/usr/lib64" a so target real fixed=0 deleted=0 h
+  local libdir="$SYSROOT/usr/lib64" a so target base real fixed=0 deleted=0 h
   shopt -s nullglob
   for a in "$libdir"/lib*.a; do
     so="${a%.a}.so"
@@ -93,13 +93,11 @@ fixup_sysroot_libs() {
     if [[ ! -L "$so" ]]; then continue; fi
     if [[ -e "$so" ]]; then continue; fi
     target="$(readlink "$so")"
-    if [[ "$target" == /* ]]; then continue; fi
-    # 优先在 sysroot 自身找运行时库（RPM 解压顺序可能让 devel 的 .so
-    # 先落地而成为断链），再退回系统目录。protobuf 的
-    # libprotobuf.so -> libprotobuf.so.25 就是这种情况。
-    for real in "$libdir/$(basename "$target")" \
-                "/usr/lib64/$(basename "$target")" \
-                "/lib64/$(basename "$target")"; do
+    base="$(basename "$target")"
+    # 链接目标可能是相对名（libprotobuf.so.25）或绝对路径
+    # （/usr/lib64/libgsl.so.25），只取文件名；优先在 sysroot 里找运行时
+    # RPM 解压出来的库，再退回系统目录。
+    for real in "$libdir/$base" "/usr/lib64/$base" "/lib64/$base"; do
       if [[ -f "$real" ]]; then
         ln -sfn "$real" "$so"
         fixed=$((fixed + 1))
@@ -299,6 +297,16 @@ if [[ -n "$PM" ]]; then
       dnf_ok=$((dnf_ok + 1))
     else
       echo "FAIL dnf download $pkg" >> "$LOG/dep-sysroot.log"
+    fi
+    # devel 的 libXXX.so 只是指向运行时库 libXXX.so.N 的链接；麒麟主机
+    # 常没装运行时包，链接就断了，CMake 的 find_library 会失败
+    # （Protobuf / GSL 均实测）。自动把同名运行时包也拉进 sysroot，
+    # 下载失败只记录、不阻断（很多运行时包本来就在系统里）。
+    if [[ "$pkg" == *-devel ]]; then
+      rt="${pkg%-devel}"
+      (cd "$CACHE_DIR/rpms" && "$PM" -q download --destdir . \
+          --setopt=cachedir="$CACHE_DIR/dnf" "$rt") >> "$LOG/dep-sysroot.log" 2>&1 \
+        || echo "FAIL dnf download $rt (runtime, optional)" >> "$LOG/dep-sysroot.log"
     fi
   done
 fi

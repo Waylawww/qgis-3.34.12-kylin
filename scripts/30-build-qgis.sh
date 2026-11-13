@@ -144,12 +144,13 @@ for src_lib in lib lib64; do
       -exec cp -a {} "${DEPS_STAGE}/${src_lib}/" \;
   fi
 done
-# QGIS core 链接了 sysroot 里的 libprotobuf.so.25（vector tiles），
-# 而这些库不在 $DEPS_PREFIX 下；必须随 RPM 安装，否则包装后 ldd -r
-# 会报 not found。
+# QGIS core 链接了 sysroot 里的 libprotobuf.so.25（vector tiles）与
+# libgsl.so.25 / libgslcblas.so.0（analysis），这些库不在 $DEPS_PREFIX 下；
+# 必须随 RPM 安装，否则包装后 ldd -r 会报 not found。
 if [[ -d "${SYSROOT}/usr/lib64" ]]; then
   find "${SYSROOT}/usr/lib64" -maxdepth 1 \
-    \( -name 'libprotobuf.so.*' -o -name 'libprotoc.so.*' \) \
+    \( -name 'libprotobuf.so.*' -o -name 'libprotoc.so.*' \
+       -o -name 'libgsl.so.*' -o -name 'libgslcblas.so.*' \) \
     -exec cp -a {} "${DEPS_STAGE}/lib/" \;
 fi
 # SIP/PyQt5 的 Python 包
