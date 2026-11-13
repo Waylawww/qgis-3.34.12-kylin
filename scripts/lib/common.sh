@@ -75,3 +75,10 @@ sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 require_linux_or_container() {
   [[ "$(uname -s)" == "Linux" ]] || die "本工程所有构建/验证步骤必须在 Linux 容器内执行"
 }
+
+# 依赖源码统一安装到独立前缀；workflow 通过环境变量注入持久化目录，
+# 本地运行时回退到仓库 .cache/。绝不写入 /usr，不覆盖系统 Qt/PROJ/GEOS/GDAL。
+DEPS_PREFIX="${DEPS_PREFIX:-${REPO_ROOT}/${DEPS_PREFIX_DEFAULT:-.cache/qgis-334-deps}}"
+CACHE_DIR="${CACHE_DIR:-${REPO_ROOT}/${CACHE_DIR_DEFAULT:-.cache/qgis-334-src}}"
+export DEPS_PREFIX CACHE_DIR
+mkdir -p "${DEPS_PREFIX}" "${CACHE_DIR}"

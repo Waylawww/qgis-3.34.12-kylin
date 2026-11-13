@@ -1,10 +1,28 @@
-name: QGIS 3.34.12 · Native Kylin V10 RPM
+name: QGIS 3.34.12 · Native Kylin V10 x86_64 RPM
 
+# 安全约束：不声明 pull_request 触发器，杜绝不可信 fork PR 在 self-hosted
+# runner 上执行；push 只允许本仓库可信分支，job 内再做一次事件类型断言。
 on:
   push:
     branches:
       - feat/native-kylin-self-hosted-build
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
+    inputs:
+      stage:
+        description: '执行阶段：diagnose / deps / qgis / all'
+        type: choice
+        options: [diagnose, deps, qgis, all]
+        default: diagnose
+      build_jobs:
+        description: '并行编译任务数'
+        default: '6'
+      force_rebuild_deps:
+        description: '忽略依赖缓存，强制重建依赖'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -13,38 +31,107 @@ concurrency:
   group: qgis-native-kylin-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  QGIS_VERSION: '3.34.12'
+  STAGE: ${{ github.event.inputs.stage || 'diagnose' }}
+  QGIS_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '6' }}
+  FORCE_REBUILD_DEPS: ${{ github.event.inputs.force_rebuild_deps || 'false' }}
+  # 持久化目录位于 runner.workspace（checkout 目录的父级），不会被
+  # actions/checkout 的 git clean 清掉，供依赖缓存跨 run 复用。
+  DEPS_PREFIX: ${{ runner.workspace }}/_qgis-334-deps
+  CACHE_DIR: ${{ runner.workspace }}/_qgis-334-cache
+  WORK_DIR: ${{ runner.workspace }}/_qgis-334-work
+  OUT_DIR: ${{ runner.workspace }}/_qgis-334-out
+  REPORT_DIR: ${{ runner.workspace }}/_qgis-334-reports
+
 jobs:
   native-build:
-    name: Native build on target Kylin/Hygon runner
-    runs-on: self-hosted
-    timeout-minutes: 360
-    env:
-      QGIS_BUILD_JOBS: '4'
-      REPO_ROOT: ${{ github.workspace }}
-      WORK_DIR: ${{ runner.temp }}/qgis-33412-work
-      OUT_DIR: ${{ runner.temp }}/qgis-33412-out
-      REPORT_DIR: ${{ runner.temp }}/qgis-33412-reports
+    name: Native build on kylin-v10-hygon
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, X64, kylin-v10-hygon, qgis-build]
+    timeout-minutes: 720
     steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          echo "workspace=${GITHUB_WORKSPACE}"
+          [[ "$(uname -m)" == "x86_64" ]] || { echo "::error::not x86_64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
       - name: Checkout trusted branch
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Native dependency probe and build
+      - name: Prepare persistent directories
         shell: bash
-        run: bash scripts/native-build.sh
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEPS_PREFIX" "$CACHE_DIR" "$WORK_DIR" "$OUT_DIR/rpms" \
+                   "$OUT_DIR/srpms" "$REPORT_DIR/logs" "$REPORT_DIR/stages"
+          echo "DEPS_PREFIX=$DEPS_PREFIX"
+          df -h "$DEPS_PREFIX" "$GITHUB_WORKSPACE"
+          free -h
 
-      - name: Upload RPMs, reports and logs
+      - name: Environment / toolchain / repo / network probe
+        shell: bash
+        run: bash scripts/10-probe-env.sh 2>&1 | tee "$REPORT_DIR/logs/10-probe-env.log"
+
+      - name: Upstream dependency matrix probe (non-blocking)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 scripts/probe-kylin.py --write --allow-unverified 2>&1 \
+            | tee "$REPORT_DIR/logs/dependency-probe.log"
+          cp -f reports/dependency-matrix.json "$REPORT_DIR/dependency-matrix.json" 2>/dev/null || true
+          cp -f config/kylin.confirmed.env "$REPORT_DIR/kylin.confirmed.env" 2>/dev/null || true
+          cp -f config/deps.confirmed.env "$REPORT_DIR/deps.confirmed.env" 2>/dev/null || true
+
+      - name: Native build entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/native-build.sh 2>&1 | tee "$REPORT_DIR/logs/native-build.log"
+
+      - name: Failure tail (fast triage)
+        if: failure()
+        shell: bash
+        run: |
+          echo '===== native-build.log tail ====='
+          tail -n 120 "$REPORT_DIR/logs/native-build.log" 2>/dev/null || true
+          echo '===== cmake probe tail ====='
+          tail -n 120 "$REPORT_DIR/logs/cmake-probe.log" 2>/dev/null || true
+
+      - name: Upload logs, reports and build evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qgis-3.34.12-kylin-native-${{ github.run_number }}
+          name: qgis-33412-evidence-${{ github.run_number }}-${{ github.event.inputs.stage || 'diagnose' }}
           path: |
-            ${{ runner.temp }}/qgis-33412-out/
-            ${{ runner.temp }}/qgis-33412-reports/
+            ${{ runner.workspace }}/_qgis-334-reports/
             ${{ github.workspace }}/reports/
             ${{ github.workspace }}/config/*.confirmed.env
             ${{ github.workspace }}/packaging/generated/
             ${{ github.workspace }}/packaging/qgis-kylin.spec
           if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPMs, SRPMs and checksums
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qgis-33412-rpms-${{ github.run_number }}
+          path: |
+            ${{ runner.workspace }}/_qgis-334-out/rpms/*.rpm
+            ${{ runner.workspace }}/_qgis-334-out/srpms/*.src.rpm
+            ${{ runner.workspace }}/_qgis-334-out/*.sha256
+            ${{ runner.workspace }}/_qgis-334-reports/RPM_VERIFICATION.md
+          if-no-files-found: warn
           compression-level: 0
+          retention-days: 90
