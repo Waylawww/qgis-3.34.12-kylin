@@ -16,7 +16,7 @@ concurrency:
 jobs:
   native-build:
     name: Native build on target Kylin/Hygon runner
-    runs-on: [self-hosted, Linux, X64, qgis-build]
+    runs-on: self-hosted
     timeout-minutes: 360
     env:
       QGIS_BUILD_JOBS: '4'
