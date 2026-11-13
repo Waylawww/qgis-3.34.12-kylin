@@ -36,13 +36,9 @@ env:
   STAGE: ${{ github.event.inputs.stage || 'diagnose' }}
   QGIS_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '6' }}
   FORCE_REBUILD_DEPS: ${{ github.event.inputs.force_rebuild_deps || 'false' }}
-  # 持久化目录位于 runner.workspace（checkout 目录的父级），不会被
-  # actions/checkout 的 git clean 清掉，供依赖缓存跨 run 复用。
-  DEPS_PREFIX: ${{ runner.workspace }}/_qgis-334-deps
-  CACHE_DIR: ${{ runner.workspace }}/_qgis-334-cache
-  WORK_DIR: ${{ runner.workspace }}/_qgis-334-work
-  OUT_DIR: ${{ runner.workspace }}/_qgis-334-out
-  REPORT_DIR: ${{ runner.workspace }}/_qgis-334-reports
+  # 注意：runner 上下文在 workflow 顶层 env 中不可用（会直接导致
+  # Invalid workflow file / 0 jobs）。持久目录改由首步骤基于
+  # GITHUB_WORKSPACE 的父目录计算后写入 GITHUB_ENV。
 
 jobs:
   native-build:
@@ -72,10 +68,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$DEPS_PREFIX" "$CACHE_DIR" "$WORK_DIR" "$OUT_DIR/rpms" \
-                   "$OUT_DIR/srpms" "$REPORT_DIR/logs" "$REPORT_DIR/stages"
-          echo "DEPS_PREFIX=$DEPS_PREFIX"
-          df -h "$DEPS_PREFIX" "$GITHUB_WORKSPACE"
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          export DEPS_PREFIX="$BASE/_qgis-334-deps"
+          export CACHE_DIR="$BASE/_qgis-334-cache"
+          export WORK_DIR="$BASE/_qgis-334-work"
+          export OUT_DIR="$BASE/_qgis-334-out"
+          export REPORT_DIR="$BASE/_qgis-334-reports"
+          mkdir -p "$DEPS_PREFIX" "$CACHE_DIR" "$WORK_DIR" \
+                   "$OUT_DIR/rpms" "$OUT_DIR/srpms" \
+                   "$REPORT_DIR/logs" "$REPORT_DIR/stages"
+          {
+            echo "QGIS_BUILD_BASE=$BASE"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+            echo "CACHE_DIR=$CACHE_DIR"
+            echo "WORK_DIR=$WORK_DIR"
+            echo "OUT_DIR=$OUT_DIR"
+            echo "REPORT_DIR=$REPORT_DIR"
+          } >> "$GITHUB_ENV"
+          echo "persistent base: $BASE"
+          df -h "$BASE"
           free -h
 
       - name: Environment / toolchain / repo / network probe
@@ -114,7 +125,7 @@ jobs:
         with:
           name: qgis-33412-evidence-${{ github.run_number }}-${{ github.event.inputs.stage || 'diagnose' }}
           path: |
-            ${{ runner.workspace }}/_qgis-334-reports/
+            ${{ env.REPORT_DIR }}/
             ${{ github.workspace }}/reports/
             ${{ github.workspace }}/config/*.confirmed.env
             ${{ github.workspace }}/packaging/generated/
@@ -128,10 +139,10 @@ jobs:
         with:
           name: qgis-33412-rpms-${{ github.run_number }}
           path: |
-            ${{ runner.workspace }}/_qgis-334-out/rpms/*.rpm
-            ${{ runner.workspace }}/_qgis-334-out/srpms/*.src.rpm
-            ${{ runner.workspace }}/_qgis-334-out/*.sha256
-            ${{ runner.workspace }}/_qgis-334-reports/RPM_VERIFICATION.md
+            ${{ env.OUT_DIR }}/rpms/*.rpm
+            ${{ env.OUT_DIR }}/srpms/*.src.rpm
+            ${{ env.OUT_DIR }}/*.sha256
+            ${{ env.REPORT_DIR }}/RPM_VERIFICATION.md
           if-no-files-found: warn
           compression-level: 0
           retention-days: 90
