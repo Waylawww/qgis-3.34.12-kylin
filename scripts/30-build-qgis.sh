@@ -95,12 +95,38 @@ grep -q 'QGIS_PY_SITE' "$FIND_PYQT5" \
 # 提供）。ninja 链接时会报 "...libXXX.so, missing and no known rule to make it"。
 # 这里为所有需要的库补齐 libXXX.so 链接名（指向已存在的版本化文件），CMake
 # 变量即可对上。实测踩过：libprotobuf-lite.so、libprotoc.so、libexpat.so。
+#
+# !!! 这一段曾让整个作业"无声 exit 1"：日志停在上一行的
+#     "FindPyQt5.cmake 补丁已存在" 之后再无输出、直接退出。
+#     原写法
+#       _ver="$(ls -v ...*.so.* | grep -E ... | tail -1)"
+#       [[ -n "$_ver" ]] && ln -sf ...
+#     sysroot 里没有对应文件时 _ver 为空，循环体最后那条 `[[ ... ]] && ...`
+#     返回 1，在 `set -e` 下直接把脚本带走（且不打印任何东西）。
+#     因此这里必须：① 命令替换末尾 `|| true`；② 用 if/else 而不是
+#     `[[ ]] && cmd` 结尾；③ 每一步都打日志，出问题能从日志看出是哪个库。
+_sysroot_files=0
+if [[ -d "${SYSROOT}/usr/lib64" ]]; then
+  _sysroot_files="$(find "${SYSROOT}/usr/lib64" -maxdepth 1 -type f | wc -l || true)"
+else
+  warn "sysroot 不存在: ${SYSROOT}/usr/lib64（依赖阶段没解压 DEVEL RPM？）"
+fi
+log "sysroot: ${SYSROOT}/usr/lib64 共 ${_sysroot_files} 个文件"
 for _pb in libprotobuf libprotobuf-lite libprotoc libexpat; do
   _link="${SYSROOT}/usr/lib64/${_pb}.so"
-  if [[ ! -e "$_link" ]]; then
-    _ver="$(ls -v "${SYSROOT}/usr/lib64/${_pb}.so".* 2>/dev/null \
-            | grep -E '\.so\.[0-9]+$' | tail -1)"
-    [[ -n "$_ver" ]] && ln -sf "$(basename "$_ver")" "$_link"
+  if [[ -e "$_link" || -L "$_link" ]]; then
+    continue
+  fi
+  _ver="$(ls -v "${SYSROOT}/usr/lib64/${_pb}.so".* 2>/dev/null \
+          | grep -E '\.so\.[0-9]+(\.[0-9]+)*$' | tail -1 || true)"
+  if [[ -n "$_ver" ]]; then
+    if ln -sf "$(basename "$_ver")" "$_link" 2>/dev/null; then
+      log "补链接名: ${_pb}.so -> $(basename "$_ver")"
+    else
+      warn "补链接名失败: ${_link}（权限或目标目录缺失）"
+    fi
+  else
+    warn "sysroot 缺 ${_pb}.so 与 ${_pb}.so.N，跳过补链接名（若 QGIS 真的链接它，ninja 会明确报错）"
   fi
 done
 
@@ -122,6 +148,37 @@ if [[ ! -f "$_expat_inc/expat.h" || ! -e "$_expat_lib" ]]; then
   _expat_inc="$SYSROOT/usr/include"; _expat_lib="$SYSROOT/usr/lib64/libexpat.so"
 fi
 log "EXPAT hints: inc=$_expat_inc lib=$_expat_lib"
+
+# 显式路径只喂给真实存在的文件：给 CMake 一个不存在的 FILEPATH，它不会报错，
+# 而是"找到"了这个不存在的库，问题被拖到 ninja 链接期（`missing and no known
+# rule to make it`，比配置期的 Could NOT find 难读得多）。缺少时干脆不传，
+# 让 find_package 自己探测并明确报错。
+PROTOBUF_HINTS=(); _proto_ok=1
+[[ -f "${SYSROOT}/usr/include/google/protobuf/message.h" ]] || _proto_ok=0
+for _l in libprotobuf libprotobuf-lite libprotoc; do
+  [[ -e "${SYSROOT}/usr/lib64/${_l}.so" ]] || _proto_ok=0
+done
+[[ -x "${SYSROOT}/usr/bin/protoc" ]] || _proto_ok=0
+if (( _proto_ok )); then
+  PROTOBUF_HINTS=(
+    -DProtobuf_INCLUDE_DIR:PATH="${SYSROOT}/usr/include"
+    -DProtobuf_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf.so"
+    -DProtobuf_LITE_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf-lite.so"
+    -DProtobuf_PROTOC_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotoc.so"
+    -DProtobuf_PROTOC_EXECUTABLE:FILEPATH="${SYSROOT}/usr/bin/protoc"
+  )
+  log "Protobuf hints: ${SYSROOT}/usr（头文件 + libprotobuf/lite/protoc + protoc）"
+else
+  warn "sysroot 的 protobuf 头文件/库/protoc 不全（${SYSROOT}），不传 Protobuf_* 提示，交给 CMake 探测"
+fi
+
+EXPAT_HINTS=()
+if [[ -f "$_expat_inc/expat.h" && -e "$_expat_lib" ]]; then
+  EXPAT_HINTS=(-DEXPAT_INCLUDE_DIR:PATH="$_expat_inc" -DEXPAT_LIBRARY:FILEPATH="$_expat_lib")
+else
+  warn "expat 头文件或库缺失（inc=$_expat_inc lib=$_expat_lib），不传 EXPAT_* 提示"
+fi
+log "前置修正完成，开始 CMake 配置（完整日志: ${LOG}/qgis-cmake.log）"
 
 rm -rf "$QGIS_BUILD"
 set -o pipefail
@@ -153,13 +210,8 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DQMAKE_EXECUTABLE:FILEPATH="${DEPS_PREFIX}/bin/qmake" \
   -DPYQT5_MOD_DIR:PATH="$PY_SITE/PyQt5" \
   -DPYQT5_SIP_DIR:PATH="$PY_SITE/PyQt5/bindings" \
-  -DProtobuf_INCLUDE_DIR:PATH="${SYSROOT}/usr/include" \
-  -DProtobuf_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf.so" \
-  -DProtobuf_LITE_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf-lite.so" \
-  -DProtobuf_PROTOC_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotoc.so" \
-  -DProtobuf_PROTOC_EXECUTABLE:FILEPATH="${SYSROOT}/usr/bin/protoc" \
-  -DEXPAT_INCLUDE_DIR:PATH="$_expat_inc" \
-  -DEXPAT_LIBRARY:FILEPATH="$_expat_lib" \
+  ${PROTOBUF_HINTS[@]+"${PROTOBUF_HINTS[@]}"} \
+  ${EXPAT_HINTS[@]+"${EXPAT_HINTS[@]}"} \
   2>&1 | tee "${LOG}/qgis-cmake.log"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \

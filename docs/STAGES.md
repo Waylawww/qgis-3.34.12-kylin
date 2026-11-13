@@ -168,6 +168,7 @@ out/rpms/qgis-devel-3.34.12-1.kylin10.x86_64.rpm
 | `libqgis_3d.so.* 缺失` | Qt5 3D 开发包缺失导致 3D 被静默关闭；`cmake` 日志搜 `3D`，补齐 `pkgconfig(Qt53DCore)` |
 | `PyQGIS 未找到` | `BINDINGS_GLOBAL_INSTALL` 未生效或 SIP/PyQt5 版本不匹配；检查 `reports/CMakeCache.txt` |
 | `rpmbuild 超过 360 分钟` | 用更大 runner / 提高 `QGIS_BUILD_JOBS` / 启用 ccache 卷，或拆分 job（不建议为绕限制而降低功能） |
+| 日志停在 `FindPyQt5.cmake 补丁已存在` 之后**直接 exit 1、没有任何错误行** | `30-build-qgis.sh` 补 `libXXX.so` 链接名的循环以 `[[ -n "$_ver" ]] && ln -sf ...` 结尾，sysroot 里没有该库时返回 1，被 `set -e` 静默带走。已改为 `if/else` + 告警；现在所有脚本都有 ERR trap，会打印 `ERR: rc=… @ 文件:行号`。若仍告警“sysroot 缺 libXXX.so”，说明 `reports/logs/dep-sysroot.log` 里对应 RPM（protobuf / protobuf-lite / protoc / expat）没下载解压成功 |
 
 ---
 

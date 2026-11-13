@@ -23,6 +23,14 @@ info() { printf '\033[0;32m[%s] %s\033[0m\n' "$(date -u +%H:%M:%S)" "$*"; }
 warn() { printf '\033[0;33m[%s] WARN: %s\033[0m\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 die()  { printf '\033[0;31m[%s] FATAL: %s\033[0m\n' "$(date -u +%H:%M:%S)" "$*" >&2; exit 1; }
 
+# 失败定位：set -e 只交出退出码，CI 日志里往往"最后一行之后直接 exit 1"，
+# 完全看不出死在哪。这里挂一个 ERR trap（set -E 让函数与子 shell 一并继承），
+# 把出错文件:行号与命令打到 stderr；被 if / && / || 保护的命令不会触发，
+# 与 set -e 的抑制规则一致。用内联 trap 而不是函数，这样 BASH_SOURCE/LINENO
+# 指向的是真正出错的位置。
+trap 'rc=$?; printf "[%s] ERR: rc=%s @ %s:%s\n        %s\n" \
+  "$(date -u +%H:%M:%S)" "$rc" "${BASH_SOURCE[0]##*/}" "$LINENO" "$BASH_COMMAND" >&2' ERR
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令: $1  ($2)"
 }
