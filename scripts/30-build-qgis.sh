@@ -104,10 +104,16 @@ for _pb in libprotobuf libprotobuf-lite libprotoc libexpat; do
   fi
 done
 
-# EXPAT 走 CMake 的 CMAKE_PREFIX_PATH 自动探测（sysroot/usr 已含 expat-devel
-# 的 expat.h 与 libexpat.so）。上面补齐的 libexpat.so 链接名保证 ninja 链接
-# 时能找到文件；不要传 -DEXPAT_* 显式提示——那会覆盖自动探测并可能因取值
-# 无效而报 "Could NOT find EXPAT"。
+# EXPAT：sysroot 里确有完整 expat（expat.h + libexpat.so -> libexpat.so.1 ->
+# libexpat.so.1.6.11），但 FindEXPAT 经 CMAKE_PREFIX_PATH 自动探测在部分
+# runner 上不稳定，这里显式给出路径最稳。先做存在性诊断写进日志。
+_expat_inc="$SYSROOT/usr/include"
+_expat_lib="$SYSROOT/usr/lib64/libexpat.so"
+if [[ ! -f "$_expat_inc/expat.h" || ! -e "$_expat_lib" ]]; then
+  _expat_inc="/usr/include"; _expat_lib="/usr/lib64/libexpat.so"
+fi
+log "EXPAT hints: inc=$_expat_inc lib=$_expat_lib"
+ls -l "$_expat_inc/expat.h" "$_expat_lib" 2>&1 | log
 
 rm -rf "$QGIS_BUILD"
 set -o pipefail
@@ -144,6 +150,8 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DProtobuf_LITE_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf-lite.so" \
   -DProtobuf_PROTOC_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotoc.so" \
   -DProtobuf_PROTOC_EXECUTABLE:FILEPATH="${SYSROOT}/usr/bin/protoc" \
+  -DEXPAT_INCLUDE_DIR:PATH="$_expat_inc" \
+  -DEXPAT_LIBRARY:FILEPATH="$_expat_lib" \
   2>&1 | tee "${LOG}/qgis-cmake.log"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \
