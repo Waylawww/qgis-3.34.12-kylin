@@ -1,271 +1,50 @@
-name: QGIS 3.34.12 / Kylin V10 / x86_64 RPM
+name: QGIS 3.34.12 · Native Kylin V10 RPM
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
+    branches:
+      - feat/native-kylin-self-hosted-build
   workflow_dispatch:
-    inputs:
-      build_jobs:
-        description: '并行编译任务数（GitHub 托管 runner 建议 4）'
-        required: false
-        default: '4'
-      require_vm_test:
-        description: '缺少 qcow2 时是否让流水线失败（默认否，仅标记 UNVERIFIED）'
-        type: boolean
-        required: false
-        default: false
-      publish_release:
-        description: '是否在本次运行中创建/更新 GitHub Release'
-        type: boolean
-        required: false
-        default: false
-
-concurrency:
-  group: qgis-33412-kylin-${{ github.ref }}
-  cancel-in-progress: false
 
 permissions:
-  contents: write
-  packages: read
+  contents: read
 
-env:
-  QGIS_VERSION: '3.34.12'
-  KYLIN_BASE_IMAGE: ${{ vars.KYLIN_BASE_IMAGE }}
-  KYLIN_TEST_IMAGE: ${{ vars.KYLIN_TEST_IMAGE || vars.KYLIN_BASE_IMAGE }}
-  KYLIN_REPO_FILE_URL: ${{ vars.KYLIN_REPO_FILE_URL }}
-  KYLIN_EXTRA_REPO_URLS: ${{ vars.KYLIN_EXTRA_REPO_URLS }}
-  QGIS_BUILD_JOBS: ${{ vars.QGIS_BUILD_JOBS || inputs.build_jobs || '4' }}
-  PREFLIGHT_ONLINE: '1'
-  VM_REQUIRE_KVM: ${{ vars.VM_REQUIRE_KVM || 'false' }}
+concurrency:
+  group: qgis-native-kylin-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  # --------------------------------------------------------------------------
-  preflight:
-    name: '0 · 参数门禁（未确认参数一律拒绝）'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: 校验已确认参数 / 官方 tag / 磁盘
-        run: |
-          chmod +x scripts/*.sh scripts/*.py scripts/lib/*.sh
-          bash scripts/00-preflight.sh --ci
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: preflight-report
-          path: reports/preflight.json
-          if-no-files-found: warn
-
-  # --------------------------------------------------------------------------
-  build:
-    name: 'A+B · 原生编译 / rpmbuild / 静态校验'
-    needs: preflight
-    runs-on: ubuntu-latest
+  native-build:
+    name: Native build on target Kylin/Hygon runner
+    runs-on: [self-hosted, Linux, X64, qgis-build]
     timeout-minutes: 360
+    env:
+      QGIS_BUILD_JOBS: '4'
+      REPO_ROOT: ${{ github.workspace }}
+      WORK_DIR: ${{ runner.temp }}/qgis-33412-work
+      OUT_DIR: ${{ runner.temp }}/qgis-33412-out
+      REPORT_DIR: ${{ runner.temp }}/qgis-33412-reports
     steps:
-      - uses: actions/checkout@v4
-      - name: 释放 runner 磁盘
-        run: bash scripts/ci-free-space.sh
-
-      - name: 登录私有/GHCR 镜像仓库（如已配置）
-        if: ${{ vars.KYLIN_REGISTRY != '' }}
-        uses: docker/login-action@v3
+      - name: Checkout trusted branch
+        uses: actions/checkout@v4
         with:
-          registry: ${{ vars.KYLIN_REGISTRY }}
-          username: ${{ secrets.KYLIN_REGISTRY_USERNAME || github.actor }}
-          password: ${{ secrets.KYLIN_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Native dependency probe and build
+        shell: bash
+        run: bash scripts/native-build.sh
 
-      - name: 构建 Kylin V10 原生编译镜像
-        run: |
-          docker build --progress=plain \
-            --build-arg "KYLIN_BASE_IMAGE=${KYLIN_BASE_IMAGE}" \
-            --build-arg "KYLIN_REPO_FILE_URL=${KYLIN_REPO_FILE_URL}" \
-            --build-arg "KYLIN_EXTRA_REPO_URLS=${KYLIN_EXTRA_REPO_URLS}" \
-            --build-arg "QGIS_BUILD_JOBS=${QGIS_BUILD_JOBS}" \
-            -f docker/Dockerfile.kylin \
-            -t qgis-kylin-builder:3.34.12 .
-
-      - name: 在容器内构建 QGIS 3.34.12 并打包 RPM
-        run: |
-          mkdir -p work out reports/logs
-          chmod -R a+rwX work out reports
-          docker run --rm --name qgis-build \
-            -v "${PWD}/work:/opt/qgis-build/work" \
-            -v "${PWD}/out:/opt/qgis-build/out" \
-            -v "${PWD}/reports:/opt/qgis-build/reports" \
-            -e "QGIS_BUILD_JOBS=${QGIS_BUILD_JOBS}" \
-            -e "PREFLIGHT_ONLINE=0" \
-            qgis-kylin-builder:3.34.12 build
-
-      - name: 构建日志尾部（失败时便于定位）
-        if: failure()
-        run: tail -n 250 reports/logs/rpmbuild.log 2>/dev/null || true
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload RPMs, reports and logs
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: qgis-3.34.12-rpms
-          path: out/rpms/*.rpm
-          if-no-files-found: error
-          compression-level: 0
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qgis-3.34.12-srpms
-          path: out/srpms/*.src.rpm
+          name: qgis-3.34.12-kylin-native-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/qgis-33412-out/
+            ${{ runner.temp }}/qgis-33412-reports/
+            ${{ github.workspace }}/reports/
+            ${{ github.workspace }}/config/*.confirmed.env
+            ${{ github.workspace }}/packaging/generated/
+            ${{ github.workspace }}/packaging/qgis-kylin.spec
           if-no-files-found: warn
           compression-level: 0
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qgis-3.34.12-build-reports
-          path: |
-            reports/
-            packaging/qgis-kylin.spec
-            config/kylin.confirmed.env
-            config/deps.confirmed.env
-          if-no-files-found: warn
-
-  # --------------------------------------------------------------------------
-  test-install:
-    name: 'B2 · 全新麒麟容器安装 / 启动 / 离屏渲染'
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: qgis-3.34.12-rpms
-          path: out/rpms
-      - name: 登录镜像仓库（如已配置）
-        if: ${{ vars.KYLIN_REGISTRY != '' }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ vars.KYLIN_REGISTRY }}
-          username: ${{ secrets.KYLIN_REGISTRY_USERNAME || github.actor }}
-          password: ${{ secrets.KYLIN_REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: 在全新 Kylin V10 容器中安装并运行
-        run: |
-          docker pull "${KYLIN_TEST_IMAGE}"
-          mkdir -p out/evidence reports/logs reports/stages
-          chmod -R a+rwX out reports
-          docker run --rm --name qgis-test-install \
-            -v "${PWD}:/work" -w /work \
-            -e "REPO_ROOT=/work" \
-            -e "WORK_DIR=/work/work" \
-            -e "OUT_DIR=/work/out" \
-            -e "REPORT_DIR=/work/reports" \
-            "${KYLIN_TEST_IMAGE}" \
-            bash -lc 'set -e
-              (command -v dnf >/dev/null && PM=dnf) || PM=yum
-              $PM -y install python3 curl coreutils which procps-ng >/dev/null 2>&1 || true
-              bash /work/scripts/50-test-install.sh'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qgis-3.34.12-container-runtime-evidence
-          path: |
-            out/evidence/
-            reports/container-runtime.json
-            reports/stages/stage-b2.json
-          if-no-files-found: warn
-
-  # --------------------------------------------------------------------------
-  test-vm:
-    name: 'C · QEMU/KVM 真实麒麟 V10 虚拟机验证'
-    needs: [build, test-install]
-    if: ${{ always() && needs.build.result == 'success' && needs['test-install'].result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: qgis-3.34.12-rpms
-          path: out/rpms
-      - name: 安装 QEMU / cloud-init 工具
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils \
-            cloud-image-utils genisoimage sshpass openssh-client
-      - name: 启动目标系统虚拟机并验证
-        env:
-          KYLIN_QCOW2_URL: ${{ secrets.KYLIN_QCOW2_URL }}
-          KYLIN_QCOW2_SHA256: ${{ vars.KYLIN_QCOW2_SHA256 }}
-          KYLIN_VM_SSH_PASSWORD: ${{ secrets.KYLIN_VM_SSH_PASSWORD }}
-          KYLIN_VM_SSH_USER: ${{ vars.KYLIN_VM_SSH_USER || 'qgis-ci' }}
-        run: |
-          mkdir -p out/evidence/vm reports/stages
-          if [ "${{ inputs.require_vm_test }}" = "true" ]; then
-            bash scripts/60-test-qemu-vm.sh --require
-          else
-            bash scripts/60-test-qemu-vm.sh
-          fi
-      - name: 串口日志（失败时）
-        if: failure()
-        run: tail -n 200 work/vm/serial.log 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qgis-3.34.12-target-vm-evidence
-          path: |
-            out/evidence/vm/
-            reports/target-vm-runtime.json
-            reports/stages/stage-c.json
-          if-no-files-found: warn
-
-  # --------------------------------------------------------------------------
-  publish:
-    name: 'D · 汇总证据 / 上传 Artifacts / Release'
-    needs: [build, test-install, test-vm]
-    if: ${{ always() && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: 归并产物与报告
-        run: |
-          mkdir -p out/rpms out/srpms out/evidence reports/stages
-          find artifacts -name '*.rpm' ! -name '*.src.rpm' -exec cp -f {} out/rpms/ \; 2>/dev/null || true
-          find artifacts -name '*.src.rpm' -exec cp -f {} out/srpms/ \; 2>/dev/null || true
-          find artifacts -name '*.json' -exec cp -f {} reports/ \; 2>/dev/null || true
-          find artifacts -name 'render.png' -exec cp -f {} out/evidence/ \; 2>/dev/null || true
-          # stage 文件可能同名被覆盖，按目录再兜底同步一次
-          cp -f artifacts/stage-*.json reports/stages/ 2>/dev/null || true
-          bash scripts/70-collect-evidence.sh
-      - name: 写入作业摘要
-        run: cat out/BUILD_REPORT.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: qgis-3.34.12-final-bundle
-          path: |
-            out/rpms/*.rpm
-            out/verification-status.json
-            out/BUILD_REPORT.md
-            out/evidence/
-            reports/
-          if-no-files-found: error
-          retention-days: 90
-      - name: 发布 GitHub Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish_release }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: 'QGIS 3.34.12 · Kylin V10 x86_64 RPM'
-          body_path: out/BUILD_REPORT.md
-          files: |
-            out/rpms/*.rpm
-            out/verification-status.json
-          fail_on_unmatched_files: false
