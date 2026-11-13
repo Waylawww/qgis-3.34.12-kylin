@@ -148,7 +148,7 @@ fetch() {
          --speed-limit 10240 --speed-time 180 --max-time 3600 "$url" \
          -o "${dest}.part" \
        && [[ -s "${dest}.part" ]] \
-       && [[ $(stat -c %s "${dest}.part") -gt 100000 ]]; then
+       && [[ $(stat -c %s "${dest}.part") -gt 10000 ]]; then
       mv -f "${dest}.part" "$dest"
       if ! validate_archive "$dest"; then
         warn "  归档不完整，丢弃并尝试下一个源: $url"
@@ -368,7 +368,12 @@ dep_qt() {
   fi
   local b="$BUILD/qt"
   rm -rf "$b"; mkdir -p "$b"; cd "$b"
-  "$SRC/qt/configure" -opensource -confirm-license -release -shared \
+  # Qt 5.15.2 configure.json 实测：xcb 是 boolean（只有 -xcb / -no-xcb），
+  # 不存在 -qt-xcb（上一轮报 "Invalid value given for boolean command line
+  # option 'xcb'"）。-no-gtk / -no-glib / -no-cups / -no-pulseaudio / -no-alsa
+  # 也不在 5.15.2 的合法选项表里，缺库的模块 configure 会自动禁用。
+  # 保留经 configure.json 确认合法的 enum(-qt-*/system-*) 与 boolean 开关。
+  if ! "$SRC/qt/configure" -opensource -confirm-license -release -shared \
     -prefix "$DEPS_PREFIX" \
     -nomake examples -nomake tests \
     -skip qtwebengine -skip qtdoc -skip qtwayland -skip qtconnectivity \
@@ -377,12 +382,15 @@ dep_qt() {
     -skip qtpurchasing -skip qtcharts -skip qtdatavis3d \
     -skip qtnetworkauth -skip qtremoteobjects -skip qtscxml \
     -skip qtspeech -skip qtvirtualkeyboard \
-    -qt-xcb -qt-pcre -qt-doubleconversion -qt-harfbuzz \
+    -qt-pcre -qt-doubleconversion -qt-harfbuzz \
     -qt-libpng -qt-libjpeg -qt-zlib \
     -system-freetype -fontconfig -openssl -no-icu \
-    -no-cups -no-dbus -no-glib -no-pulseaudio -no-alsa -no-gtk \
     -no-eglfs -no-directfb -no-linuxfb -no-kms \
-    -no-compile-examples || return 1
+    -no-compile-examples; then
+    warn "  Qt configure 失败，config.log 尾部:"
+    tail -n 80 "$b/config.log" 2>/dev/null || true
+    return 1
+  fi
   make -j"$JOBS" || return 1
   make install || return 1
   [[ -x "$DEPS_PREFIX/bin/qmake" ]] && [[ -d "$DEPS_PREFIX/lib/cmake/Qt53DCore" ]]

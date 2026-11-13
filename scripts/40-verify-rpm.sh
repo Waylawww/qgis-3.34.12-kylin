@@ -57,6 +57,10 @@ if grep -RIl 'ubuntu\|debian' "${REPORT_DIR}/rpm/"*.requires.txt 2>/dev/null | g
 fi
 
 # --- 4. 动态链接 -------------------------------------------------------------
+# 本 RPM 自带私有依赖（Qt/PROJ/GEOS/GDAL），不在系统 ldconfig 路径里，
+# 解包校验必须显式注入解包根内的私有库目录，否则 ldd 会把它们全部误报成
+# "not found"。运行时由 /usr/bin/qgis wrapper 做同样的注入。
+export LD_LIBRARY_PATH="${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib:${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib64:${ROOT}/opt/qgis-${QGIS_VERSION}/lib:${LD_LIBRARY_PATH:-}"
 LDD_LOG="${REPORT_DIR}/rpm/ldd.txt"
 : > "${LDD_LOG}"
 missing=0
