@@ -360,6 +360,16 @@ grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PR
 
 # --- 编译 / DESTDIR 安装 ----------------------------------------------------
 ninja -C "$QGIS_BUILD" -j"$JOBS" 2>&1 | tee "${LOG}/qgis-build.log"
+
+# QGIS 的 Python 插件资源（resources_rc.py、ui_*.py）由 PLUGIN_INSTALL 里的
+# zzz-<plugin>-<n>-depend 目标生成，而这些目标只挂在 staged-plugins 下；
+# staged-plugins 又只有 WITH_STAGED_PLUGINS=ON 时才通过 staged-plugins-on-build
+# 挂到 ALL（python/CMakeLists.txt）。我们的 CMAKE_ARGS 关掉了 WITH_STAGED_PLUGINS，
+# 于是 ninja 全量编译不会生成这些文件，ninja install 直接报：
+#   file INSTALL cannot find ".../qgis-build/python/plugins/db_manager/resources_rc.py"
+# 这里不改 CMAKE_ARGS（否则 .cfg-sig 变化要重编全量），安装前显式补构建一次。
+ninja -C "$QGIS_BUILD" -j"$JOBS" staged-plugins 2>&1 | tee "${LOG}/qgis-staged-plugins.log"
+
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 DESTDIR="$STAGE" ninja -C "$QGIS_BUILD" install 2>&1 | tee "${LOG}/qgis-install.log"
 
