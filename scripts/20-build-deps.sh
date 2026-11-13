@@ -94,7 +94,12 @@ fixup_sysroot_libs() {
     if [[ -e "$so" ]]; then continue; fi
     target="$(readlink "$so")"
     if [[ "$target" == /* ]]; then continue; fi
-    for real in "/usr/lib64/$(basename "$target")" "/lib64/$(basename "$target")"; do
+    # 优先在 sysroot 自身找运行时库（RPM 解压顺序可能让 devel 的 .so
+    # 先落地而成为断链），再退回系统目录。protobuf 的
+    # libprotobuf.so -> libprotobuf.so.25 就是这种情况。
+    for real in "$libdir/$(basename "$target")" \
+                "/usr/lib64/$(basename "$target")" \
+                "/lib64/$(basename "$target")"; do
       if [[ -f "$real" ]]; then
         ln -sfn "$real" "$so"
         fixed=$((fixed + 1))

@@ -119,6 +119,9 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DQMAKE_EXECUTABLE:FILEPATH="${DEPS_PREFIX}/bin/qmake" \
   -DPYQT5_MOD_DIR:PATH="$PY_SITE/PyQt5" \
   -DPYQT5_SIP_DIR:PATH="$PY_SITE/PyQt5/bindings" \
+  -DProtobuf_INCLUDE_DIR:PATH="${SYSROOT}/usr/include" \
+  -DProtobuf_LIBRARY:FILEPATH="${SYSROOT}/usr/lib64/libprotobuf.so" \
+  -DProtobuf_PROTOC_EXECUTABLE:FILEPATH="${SYSROOT}/usr/bin/protoc" \
   2>&1 | tee "${LOG}/qgis-cmake.log"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \
@@ -141,6 +144,14 @@ for src_lib in lib lib64; do
       -exec cp -a {} "${DEPS_STAGE}/${src_lib}/" \;
   fi
 done
+# QGIS core 链接了 sysroot 里的 libprotobuf.so.25（vector tiles），
+# 而这些库不在 $DEPS_PREFIX 下；必须随 RPM 安装，否则包装后 ldd -r
+# 会报 not found。
+if [[ -d "${SYSROOT}/usr/lib64" ]]; then
+  find "${SYSROOT}/usr/lib64" -maxdepth 1 \
+    \( -name 'libprotobuf.so.*' -o -name 'libprotoc.so.*' \) \
+    -exec cp -a {} "${DEPS_STAGE}/lib/" \;
+fi
 # SIP/PyQt5 的 Python 包
 if [[ -d "${DEPS_PREFIX}/lib/python3.7" ]]; then
   cp -a "${DEPS_PREFIX}/lib/python3.7" "${DEPS_STAGE}/lib/"
