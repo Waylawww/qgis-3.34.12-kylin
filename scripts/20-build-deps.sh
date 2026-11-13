@@ -107,7 +107,9 @@ fixup_sysroot_libs() {
 }
 
 setup_flags() {
-  export PATH="$DEPS_PREFIX/bin:$PATH"
+  # $PY_SITE/bin 是 pip --target 生成 sip-* console scripts 的位置；
+  # pyqtbuild 的 distinfo 目标会按 PATH 查找 sip-distinfo，必须同时可见。
+  export PATH="$DEPS_PREFIX/bin:$PY_SITE/bin:$PATH"
   export PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}"
   export LD_LIBRARY_PATH="${GCC_LIBDIR:+${GCC_LIBDIR}:}$DEPS_PREFIX/lib:$DEPS_PREFIX/lib64:${SYSROOT}/usr/lib64:${LD_LIBRARY_PATH:-}"
   export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:$DEPS_PREFIX/lib64/pkgconfig:${SYSROOT}/usr/lib64/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -513,16 +515,32 @@ dep_sip() {
     "$WHL_DIR/$TOML_WHEEL" "$WHL_DIR/$SETUPTOOLS_WHEEL" || return 1
   # QGIS cmake/FindSIP.cmake 的 SIP>=5 分支 FIND_PROGRAM(sip-build)，
   # cmake/SIPMacros.cmake 也直接调 sip-build，必须在 $DEPS_PREFIX/bin 里。
-  # 固定写 wrapper，不依赖 pip 生成 scripts 的位置。
-  cat > "$DEPS_PREFIX/bin/sip-build" <<'EOF'
-#!/usr/bin/env bash
-exec python3 -c 'import sys; from sipbuild.tools.build import main; sys.exit(main())' "$@"
-EOF
-  cat > "$DEPS_PREFIX/bin/sip-install" <<'EOF'
-#!/usr/bin/env bash
-exec python3 -c 'import sys; from sipbuild.tools.install import main; sys.exit(main())' "$@"
-EOF
-  chmod 755 "$DEPS_PREFIX/bin/sip-build" "$DEPS_PREFIX/bin/sip-install"
+  # 更关键的是 pyqtbuild.builder.QmakeBuilder：make install 的 distinfo
+  # 目标会调用 sip-distinfo，且它按 "当前 sip-* 前端所在目录" 定位该命令。
+  # 第六轮只生成了 sip-build / sip-install，$DEPS_PREFIX/bin 里没有
+  # sip-distinfo -> make install 返回 2（日志被 sipbuild 吞掉，只留一行）。
+  # 因此在这里把全套 sip-* 前端都生成到同一目录。
+  python3 - "$DEPS_PREFIX/bin" <<'PY'
+import os
+import sys
+
+out = sys.argv[1]
+tools = {
+    'sip-build': 'sipbuild.tools.build',
+    'sip-install': 'sipbuild.tools.install',
+    'sip-distinfo': 'sipbuild.distinfo.main',
+    'sip-module': 'sipbuild.module.main',
+    'sip-sdist': 'sipbuild.tools.sdist',
+    'sip-wheel': 'sipbuild.tools.wheel',
+}
+for name, mod in tools.items():
+    path = os.path.join(out, name)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('#!/usr/bin/env bash\n')
+        f.write("exec python3 -c 'import sys; from %s import main; sys.exit(main())' \"$@\"\n" % mod)
+    os.chmod(path, 0o755)
+    print('wrapper', name)
+PY
   # 必须严格短路：run_dep 在 if 子 shell 里调用，set -e 不会中止函数体，
   # 上一轮这里 import 失败却仍返回 0，把不可用的 SIP 记成了 OK。
   PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" SIP_EXPECTED="$SIP_VERSION" python3 -c \
