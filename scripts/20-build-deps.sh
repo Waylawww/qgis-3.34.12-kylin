@@ -348,6 +348,17 @@ if [[ -f "$STAMPS/sip.ok" ]] && \
          "$PY_SITE/PyQt5" "$DEPS_PREFIX/share/sip/PyQt5" "$SRC/pyqt5"
 fi
 
+# --- PyQt5 工具门禁 ---------------------------------------------------------
+# QGIS cmake/PyQtMacros.cmake 会 FIND_PROGRAM(pyrcc5)，缺了直接 FATAL_ERROR。
+# 第八轮 stamp 已是 OK，但当时 sip-install 用了 --no-tools 没装 pyrcc5，
+# 因此必须让 dep_pyqt5 重跑（走快速路径，只补工具、不重编 35 个绑定）。
+if [[ -f "$STAMPS/pyqt5.ok" ]] && \
+   { [[ ! -x "$DEPS_PREFIX/bin/pyrcc5" ]] || \
+     [[ ! -f "$PY_SITE/PyQt5/pyrcc.abi3.so" ]]; }; then
+  log "D0: PyQt5 缺 pyrcc5，清理 stamp 后补齐工具"
+  rm -f "$STAMPS/pyqt5.ok"
+fi
+
 # --- D1..Dn: 各依赖 -------------------------------------------------------
 dep_geos() {
   fetch_source GEOS "$GEOS_TARBALL" "$SRC/geos" CMakeLists.txt || return 1
@@ -582,6 +593,36 @@ sys.exit(0 if found else 1)
 PY
 }
 
+# QGIS cmake/PyQtMacros.cmake 需要 pyrcc5（把 .qrc 编成 .py）。
+# sip-install 的 --no-tools 不生成它，但官方 PyQt5 wheel 里自带
+# PyQt5/pyrcc.abi3.so + pyrcc_main.py（RCC 静态实现，不依赖 Qt 运行库），
+# 直接取这两个文件并写一个 console wrapper 即可，不必重编 tools。
+install_pyqt5_tools() {
+  local whl="$WHL_DIR/$PYQT5_TOOLS_WHEEL"
+  fetch "$whl" "${PYQT5_TOOLS_URLS[@]}" || return 1
+  python3 - "$whl" "$PY_SITE" <<'PY' || return 1
+import os, sys, zipfile
+whl, site = sys.argv[1], sys.argv[2]
+os.makedirs(os.path.join(site, 'PyQt5'), exist_ok=True)
+needed = ('PyQt5/pyrcc.abi3.so', 'PyQt5/pyrcc_main.py')
+with zipfile.ZipFile(whl) as z:
+    names = z.namelist()
+    missing = [n for n in needed if n not in names]
+    if missing:
+        print('MISSING', missing)
+        sys.exit(1)
+    for n in needed:
+        z.extract(n, site)
+        print('installed', n)
+PY
+  cat > "$DEPS_PREFIX/bin/pyrcc5" <<'EOF'
+#!/usr/bin/env python3
+from PyQt5.pyrcc_main import main
+main()
+EOF
+  chmod 755 "$DEPS_PREFIX/bin/pyrcc5"
+}
+
 pyqt5_ready() {
   local m so
   for m in QtCore QtGui QtWidgets QtNetwork QtXml QtSql QtSvg QtPrintSupport QtTest; do
@@ -590,6 +631,8 @@ pyqt5_ready() {
   done
   [[ -f "$PY_SITE/PyQt5/bindings/QtCore/QtCoremod.sip" ]] || return 1
   ls "$PY_SITE"/PyQt5-*.dist-info/METADATA >/dev/null 2>&1 || return 1
+  [[ -x "$DEPS_PREFIX/bin/pyrcc5" ]] || return 1
+  [[ -f "$PY_SITE/PyQt5/pyrcc.abi3.so" ]] || return 1
   PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
     'from PyQt5 import QtCore; print("PyQt5", QtCore.PYQT_VERSION_STR)'
 }
@@ -607,8 +650,9 @@ dep_pyqt5() {
   # 先补齐 PyQt5.sip。若上一轮 sip-install 已把 35 个绑定装好，就不必再
   # 花约 40 分钟重新生成/编译一遍（缓存目录在 runner 上是持久化的）。
   install_pyqt5_sip || return 1
+  install_pyqt5_tools || return 1
   if pyqt5_ready; then
-    log "  PyQt5 产物已完整（含 PyQt5.sip），跳过重复编译"
+    log "  PyQt5 产物已完整（含 PyQt5.sip / pyrcc5），跳过重复编译"
     return 0
   fi
   cd "$SRC/pyqt5"
@@ -670,7 +714,7 @@ main()
 EOF
     chmod 755 "$DEPS_PREFIX/bin/pyuic5"
   fi
-  install_pyqt5_sip && pyqt5_ready
+  install_pyqt5_sip && install_pyqt5_tools && pyqt5_ready
 }
 
 for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
