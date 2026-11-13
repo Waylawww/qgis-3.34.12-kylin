@@ -548,6 +548,39 @@ PY
   [[ -x "$DEPS_PREFIX/bin/sip-build" ]] || return 1
 }
 
+# PyQt5 5.15.6 sdist 只生成 bindings，不提供 PyQt5.sip 扩展模块
+# （Requires-Dist: PyQt5-sip>=12.8,<13；PyQt-builder 1.14.0 设 abi=12.11）。
+install_pyqt5_sip() {
+  local whl="$WHL_DIR/$PYQT5_SIP_WHEEL"
+  fetch "$whl" "${PYQT5_SIP_URLS[@]}" || return 1
+  python3 - "$whl" "$PY_SITE" <<'PY' || return 1
+import sys
+import zipfile
+
+whl, dest = sys.argv[1], sys.argv[2]
+found = []
+with zipfile.ZipFile(whl) as z:
+    for name in z.namelist():
+        if name.startswith('PyQt5/') and name.endswith('.so'):
+            z.extract(name, dest)
+            found.append(name)
+print('PyQt5.sip:', ', '.join(found))
+sys.exit(0 if found else 1)
+PY
+}
+
+pyqt5_ready() {
+  local m so
+  for m in QtCore QtGui QtWidgets QtNetwork QtXml QtSql QtSvg QtPrintSupport QtTest; do
+    so="$(find "$PY_SITE/PyQt5" -maxdepth 1 -name "${m}*.so" -print -quit)"
+    [[ -n "$so" ]] || return 1
+  done
+  [[ -f "$PY_SITE/PyQt5/bindings/QtCore/QtCoremod.sip" ]] || return 1
+  ls "$PY_SITE"/PyQt5-*.dist-info/METADATA >/dev/null 2>&1 || return 1
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+    'from PyQt5 import QtCore; print("PyQt5", QtCore.PYQT_VERSION_STR)'
+}
+
 dep_pyqt5() {
   fetch_source PYQT5 "PyQt5-${PYQT5_VERSION}.tar.gz" "$SRC/pyqt5" \
     pyproject.toml project.py sip/QtCore/QtCoremod.sip || return 1
@@ -558,6 +591,13 @@ dep_pyqt5() {
     return 1
   fi
   mkdir -p "$PY_SITE/PyQt5" "$DEPS_PREFIX/bin" "$BUILD/pyqt5"
+  # 先补齐 PyQt5.sip。若上一轮 sip-install 已把 35 个绑定装好，就不必再
+  # 花约 40 分钟重新生成/编译一遍（缓存目录在 runner 上是持久化的）。
+  install_pyqt5_sip || return 1
+  if pyqt5_ready; then
+    log "  PyQt5 产物已完整（含 PyQt5.sip），跳过重复编译"
+    return 0
+  fi
   cd "$SRC/pyqt5"
   # PyQt5 的复合模块 Qt 会 %Include 所有子模块 .sip，但 project.py 只给
   # QtCore 追加了 WS_X11 平台 tag。生成器在 Qt 模块里解析 qprocess.sip 的
@@ -617,13 +657,7 @@ main()
 EOF
     chmod 755 "$DEPS_PREFIX/bin/pyuic5"
   fi
-  local qcore
-  qcore="$(find "$PY_SITE/PyQt5" -maxdepth 1 -name 'QtCore*.so' -print -quit)"
-  [[ -n "$qcore" ]] || return 1
-  [[ -f "$PY_SITE/PyQt5/bindings/QtCore/QtCoremod.sip" ]] || return 1
-  ls "$PY_SITE"/PyQt5-*.dist-info/METADATA >/dev/null 2>&1 || return 1
-  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'from PyQt5 import QtCore; print("PyQt5", QtCore.PYQT_VERSION_STR)'
+  install_pyqt5_sip && pyqt5_ready
 }
 
 for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
