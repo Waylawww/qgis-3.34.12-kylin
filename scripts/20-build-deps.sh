@@ -717,11 +717,57 @@ EOF
   install_pyqt5_sip && install_pyqt5_tools && pyqt5_ready
 }
 
+dep_qsci_py() {
+  # QGIS 3.34 的 python/gui/gui.sip.in 里有一行无条件的
+  #   %Import ${QSCI_SIP_MOD_NAME}      →  Qsci/qscimod5.sip
+  # 而 SIP6 + sip-build 分支并不会把 QSCI_SIP_DIR 传给 sip-build
+  # （cmake/SIPMacros.cmake 只在 SIP4/SIP5 分支用了 SIP_EXTRA_OPTIONS），
+  # sip-build 只会传 --include-dir=${PYQT_SIP_DIR}（= PyQt5/bindings）。
+  # 所以必须把 QScintilla 的 Python 绑定真的装进 PyQt5 包：
+  #   $PY_SITE/PyQt5/Qsci*.so
+  #   $PY_SITE/PyQt5/bindings/Qsci/qscimod5.sip
+  # 实测 run 59：gui 绑定生成直接 'Qsci/qscimod5.sip' could not be found。
+  # 只塞 .sip 文件不做模块，PyQGIS 运行期 import qgis.gui 仍会失败，故不取。
+  fetch_source QSCINTILLA "QScintilla_src-${QSCINTILLA_VERSION}.tar.gz" \
+    "$SRC/qscintilla" Python/project.py Python/pyproject-qt5.toml \
+    src/qscintilla.pro || return 1
+  qmake_ready || return 1
+  if ! pyqt5_ready; then
+    warn "  PyQt5 未就绪，无法构建 QScintilla Python 绑定"
+    return 1
+  fi
+  # external-lib 模式：源码包里没有 src/，链接已装好的 QScintilla。
+  # project.py 会读 --qsci-* 这三个目录，并用 QMAKEFEATURES 找
+  # qscintilla2.prf（其中 INCLUDEPATH/LIBS 用 $$[QT_INSTALL_*]，即私有 Qt）。
+  cd "$SRC/qscintilla/Python" || return 1
+  cp -f pyproject-qt5.toml pyproject.toml || return 1
+  mkdir -p "$BUILD/qsci"
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" \
+    "$DEPS_PREFIX/bin/sip-install" \
+      --qmake="$DEPS_PREFIX/bin/qmake" \
+      --target-dir="$PY_SITE" \
+      --build-dir="$BUILD/qsci" \
+      --jobs="$JOBS" \
+      --qsci-include-dir="$DEPS_PREFIX/include" \
+      --qsci-library-dir="$DEPS_PREFIX/lib" \
+      --qsci-features-dir="$SRC/qscintilla/src/features" || return 1
+  if ! find "$PY_SITE/PyQt5" -maxdepth 1 -name 'Qsci*.so' -print -quit | grep -q .; then
+    warn "  未生成 PyQt5/Qsci*.so"
+    return 1
+  fi
+  if [[ ! -f "$PY_SITE/PyQt5/bindings/Qsci/qscimod5.sip" ]]; then
+    warn "  未安装 PyQt5/bindings/Qsci/qscimod5.sip（QGIS gui.sip 找不到）"
+    return 1
+  fi
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+    'from PyQt5 import Qsci; print("PyQt5.Qsci", Qsci.QSCINTILLA_VERSION_STR)'
+}
+
 for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
             "libzip:dep_libzip" "exiv2:dep_exiv2" "gdal:dep_gdal" \
             "qt:dep_qt" "qwt:dep_qwt" "qscintilla:dep_qscintilla" \
             "qca:dep_qca" "qtkeychain:dep_qtkeychain" \
-            "sip:dep_sip" "pyqt5:dep_pyqt5"; do
+            "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py"; do
   run_dep "${pair%%:*}" "${pair##*:}"
 done
 
