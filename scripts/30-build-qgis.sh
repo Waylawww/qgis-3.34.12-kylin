@@ -223,6 +223,84 @@ CMAKE_ARGS=(
 )
 CMAKE_ARGS+=( ${PROTOBUF_HINTS[@]+"${PROTOBUF_HINTS[@]}"} ${EXPAT_HINTS[@]+"${EXPAT_HINTS[@]}"} )
 
+# --- QGIS 3.34 已知缺陷：WITH_3D=ON + WITH_COPC=OFF 无法编译 ----------------
+# src/3d/CMakeLists.txt 无条件编译 qgsvirtualpointcloudentity_p.cpp，而它
+# #include "qgsvirtualpointcloudprovider.h"（在 src/core/providers/vpc/ 下），
+# 该目录只有 WITH_COPC=ON 时才进 qgis_core 的 PUBLIC include 路径
+# （src/core/CMakeLists.txt: if (WITH_COPC) include_directories(providers/vpc)），
+# 于是 run 63 在 [1297/3307] 报：
+#   src/3d/qgsvirtualpointcloudentity_p.cpp:17:10: fatal error:
+#     qgsvirtualpointcloudprovider.h: No such file or directory
+# 这个实体只有 VPC provider（需要 COPC/EPT）才会用到，我们两个都关，属于死代码，
+# 因此打源码补丁把它裁掉：CMake 侧从源文件列表里移除并定义 QGIS_NO_VPC_PROVIDER，
+# renderer 里对应的 include 和 else-if 分支用 #ifndef 包住。
+# 注意：只改源码、不改 CMAKE_ARGS，所以 .cfg-sig 不变，已有编译成果继续复用。
+if ! printf '%s\n' "${CMAKE_ARGS[@]}" | grep -q 'WITH_COPC:BOOL=ON'; then
+  python3 - "$QGIS_SRC" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+cmake = os.path.join(root, 'src/3d/CMakeLists.txt')
+renderer = os.path.join(root, 'src/3d/qgspointcloudlayer3drenderer.cpp')
+
+# 1) src/3d/CMakeLists.txt：从源码列表移除 VPC 实体并定义 QGIS_NO_VPC_PROVIDER
+src = open(cmake, encoding='utf-8').read()
+if 'QGIS_KYLIN_NO_VPC' in src:
+    print('3d/CMakeLists.txt 补丁已存在')
+else:
+    anchor = 'add_library(qgis_3d SHARED'
+    if anchor not in src:
+        sys.exit('ERROR: 3d/CMakeLists.txt 里找不到 %s' % anchor)
+    block = (
+        '# QGIS_KYLIN_NO_VPC: 没有 VPC provider（WITH_COPC=OFF）时，3D 里的\n'
+        '# qgsvirtualpointcloudentity_p.cpp 无法编译（provider 头文件不在 include 路径里）。\n'
+        'if (NOT WITH_COPC)\n'
+        '  list(REMOVE_ITEM QGIS_3D_SRCS qgsvirtualpointcloudentity_p.cpp)\n'
+        '  list(REMOVE_ITEM QGIS_3D_PRIVATE_HDRS qgsvirtualpointcloudentity_p.h)\n'
+        '  add_definitions(-DQGIS_NO_VPC_PROVIDER)\n'
+        'endif()\n\n'
+    )
+    open(cmake, 'w', encoding='utf-8').write(src.replace(anchor, block + anchor, 1))
+    print('已给 3d/CMakeLists.txt 打补丁')
+
+# 2) renderer：把 include 和 else-if 分支用 #ifndef QGIS_NO_VPC_PROVIDER 包住
+src = open(renderer, encoding='utf-8').read()
+inc = '#include "qgsvirtualpointcloudentity_p.h"\n'
+inc_new = '#ifndef QGIS_NO_VPC_PROVIDER\n#include "qgsvirtualpointcloudentity_p.h"\n#endif\n'
+branch_old = (
+    '  else if ( !pcl->dataProvider()->subIndexes().isEmpty() )\n'
+    '  {\n'
+    '    entity = new QgsVirtualPointCloudEntity( pcl, map, coordinateTransform, dynamic_cast<QgsPointCloud3DSymbol *>( mSymbol->clone() ), maximumScreenError(), showBoundingBoxes(),\n'
+    '        static_cast< const QgsPointCloudLayerElevationProperties * >( pcl->elevationProperties() )->zScale(),\n'
+    '        static_cast< const QgsPointCloudLayerElevationProperties * >( pcl->elevationProperties() )->zOffset(), mPointBudget );\n'
+    '  }\n'
+)
+branch_new = '#ifndef QGIS_NO_VPC_PROVIDER\n' + branch_old + '#endif\n'
+changed = 0
+if inc_new in src:
+    pass
+elif inc in src:
+    src = src.replace(inc, inc_new, 1)
+    changed += 1
+if branch_new in src:
+    pass
+elif branch_old in src:
+    src = src.replace(branch_old, branch_new, 1)
+    changed += 1
+if changed:
+    open(renderer, 'w', encoding='utf-8').write(src)
+    print('qgspointcloudlayer3drenderer.cpp 补丁 %d 处' % changed)
+else:
+    print('qgspointcloudlayer3drenderer.cpp 补丁已存在')
+PY
+  grep -q 'QGIS_KYLIN_NO_VPC' "$QGIS_SRC/src/3d/CMakeLists.txt" \
+    || die "3D VPC 已知缺陷补丁失败（CMakeLists.txt）"
+  grep -q 'QGIS_NO_VPC_PROVIDER' "$QGIS_SRC/src/3d/qgspointcloudlayer3drenderer.cpp" \
+    || die "3D VPC 已知缺陷补丁失败（renderer）"
+  log "3D VPC 已知缺陷补丁完成（WITH_COPC=OFF，裁掉 qgsvirtualpointcloudentity）"
+fi
+
 # 配置签名：参数不变就复用已有构建目录，保留增量编译结果。
 # QGIS 全量编译即使 -j8 也要 2~3 小时；安装 / rpmbuild 阶段失败时不该从头再编。
 _cfg_sig="$(printf '%s\n' "${CMAKE_ARGS[@]}" | sha256sum | awk '{print $1}')"
