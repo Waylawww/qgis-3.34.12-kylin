@@ -315,20 +315,22 @@ fi
 printf '%s\n' "${GCC_LIBDIR:-NOT_FOUND}" > "$REPORT_DIR/gcc-runtime.txt"
 setup_flags
 
-# --- SIP4 -> SIP6 迁移 ------------------------------------------------------
-# 之前成功构建的是 SIP 4.19.25，$STAMPS/sip.ok 会让 run_dep 直接 CACHED 跳过，
-# 结果 dep_pyqt5 仍然拿到 SIP4 的 sipgen，必然再次失败。这里按"能否 import
-# sipbuild/pyqtbuild"判断真实状态，而不是只看 stamp。
+# --- SIP 版本门禁 -----------------------------------------------------------
+# run_dep 只看 $STAMPS/sip.ok 就会 CACHED 跳过。SIP4 -> SIP6 的切换、
+# 以及 sip 6.7.12 -> 6.7.5 的降级（Gentoo bug 904834 的 Q_PID 回归）
+# 都必须让 dep_sip 真正重跑，所以按"能否 import 且版本等于 $SIP_VERSION"
+# 判断真实状态，而不是只看 stamp 或只看 import 是否成功。
 if [[ -f "$STAMPS/sip.ok" ]] && \
-   ! python3 -c 'import sipbuild, pyqtbuild; from sipbuild.version import SIP_VERSION_STR' >/dev/null 2>&1; then
-  log "D0: 检测到旧 SIP4 安装，清理 stamp 与产物，切换到 SIP6"
+   ! SIP_EXPECTED="$SIP_VERSION" python3 -c \
+     'import os, sipbuild, pyqtbuild; from sipbuild.version import SIP_VERSION_STR; assert SIP_VERSION_STR == os.environ["SIP_EXPECTED"]' >/dev/null 2>&1; then
+  log "D0: SIP 版本不是 $SIP_VERSION，清理 stamp 与旧产物后重建"
   rm -f "$STAMPS/sip.ok" "$STAMPS/pyqt5.ok"
   rm -f "$DEPS_PREFIX/bin/sip" "$DEPS_PREFIX/bin/sip-build" \
         "$DEPS_PREFIX/include/sip.h" \
         "$PY_SITE/sip.so" "$PY_SITE/sipconfig.py" \
         "$PY_SITE/sipdistutils.py" "$PY_SITE/sip.pyi"
-  rm -rf "$PY_SITE"/sip-4.*.dist-info "$PY_SITE/PyQt5" \
-         "$DEPS_PREFIX/share/sip/PyQt5" "$SRC/pyqt5"
+  rm -rf "$PY_SITE"/sip-*.dist-info "$PY_SITE/sipbuild" "$PY_SITE/pyqtbuild" \
+         "$PY_SITE/PyQt5" "$DEPS_PREFIX/share/sip/PyQt5" "$SRC/pyqt5"
 fi
 
 # --- D1..Dn: 各依赖 -------------------------------------------------------
@@ -495,12 +497,12 @@ dep_sip() {
   mkdir -p "$WHL_DIR" "$PY_SITE" "$DEPS_PREFIX/bin"
   fetch "$WHL_DIR/$SIP_WHEEL" "${SIP_URLS[@]}" || return 1
   fetch "$WHL_DIR/$PYQT_BUILDER_WHEEL" "${PYQT_BUILDER_URLS[@]}" || return 1
-  # sip 6.7.12 / PyQt-builder 1.14.0 的 Requires-Dist（packaging / ply /
-  # tomli / setuptools）必须一并装进私有 PY_SITE：麒麟自带 packaging 没有
+  # sip 6.7.5 / PyQt-builder 1.14.0 的 Requires-Dist（packaging / ply /
+  # toml / setuptools）必须一并装进私有 PY_SITE：麒麟自带 packaging 没有
   # packaging/markers.py，第四轮就是这里让 `import sipbuild` 失败的。
   fetch "$WHL_DIR/$PACKAGING_WHEEL" "${PACKAGING_URLS[@]}" || return 1
   fetch "$WHL_DIR/$PLY_WHEEL" "${PLY_URLS[@]}" || return 1
-  fetch "$WHL_DIR/$TOMLI_WHEEL" "${TOMLI_URLS[@]}" || return 1
+  fetch "$WHL_DIR/$TOML_WHEEL" "${TOML_URLS[@]}" || return 1
   fetch "$WHL_DIR/$SETUPTOOLS_WHEEL" "${SETUPTOOLS_URLS[@]}" || return 1
   # pip --target 把 sipbuild / pyqtbuild 与 dist-info 装进私有 PY_SITE，
   # 不写 /usr、不需要 sudo。刻意不走 PEP517：sipbuild/api.py 没有
@@ -508,7 +510,7 @@ dep_sip() {
   python3 -m pip install --no-cache-dir --no-deps --upgrade --target "$PY_SITE" \
     "$WHL_DIR/$SIP_WHEEL" "$WHL_DIR/$PYQT_BUILDER_WHEEL" \
     "$WHL_DIR/$PACKAGING_WHEEL" "$WHL_DIR/$PLY_WHEEL" \
-    "$WHL_DIR/$TOMLI_WHEEL" "$WHL_DIR/$SETUPTOOLS_WHEEL" || return 1
+    "$WHL_DIR/$TOML_WHEEL" "$WHL_DIR/$SETUPTOOLS_WHEEL" || return 1
   # QGIS cmake/FindSIP.cmake 的 SIP>=5 分支 FIND_PROGRAM(sip-build)，
   # cmake/SIPMacros.cmake 也直接调 sip-build，必须在 $DEPS_PREFIX/bin 里。
   # 固定写 wrapper，不依赖 pip 生成 scripts 的位置。
@@ -523,8 +525,8 @@ EOF
   chmod 755 "$DEPS_PREFIX/bin/sip-build" "$DEPS_PREFIX/bin/sip-install"
   # 必须严格短路：run_dep 在 if 子 shell 里调用，set -e 不会中止函数体，
   # 上一轮这里 import 失败却仍返回 0，把不可用的 SIP 记成了 OK。
-  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'import sipbuild, pyqtbuild, packaging, ply, tomli, setuptools; from sipbuild.version import SIP_VERSION_STR; print("SIP", SIP_VERSION_STR)' || return 1
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" SIP_EXPECTED="$SIP_VERSION" python3 -c \
+    'import os, sipbuild, pyqtbuild, packaging, ply, toml, setuptools; from sipbuild.version import SIP_VERSION_STR; assert SIP_VERSION_STR == os.environ["SIP_EXPECTED"], SIP_VERSION_STR; print("SIP", SIP_VERSION_STR)' || return 1
   [[ -x "$DEPS_PREFIX/bin/sip-build" ]] || return 1
 }
 
@@ -539,6 +541,33 @@ dep_pyqt5() {
   fi
   mkdir -p "$PY_SITE/PyQt5" "$DEPS_PREFIX/bin" "$BUILD/pyqt5"
   cd "$SRC/pyqt5"
+  # PyQt5 的复合模块 Qt 会 %Include 所有子模块 .sip，但 project.py 只给
+  # QtCore 追加了 WS_X11 平台 tag。生成器在 Qt 模块里解析 qprocess.sip 的
+  # %If (WS_X11 || WS_MACX) 时报 "'Q_PID' is undefined"（Gentoo bug 904834，
+  # sip 6.7.7+ 尤其容易触发）。给所有 bindings 补上平台 tag，幂等且符合
+  # Linux/X11 语义；上游结构变化时只告警、不阻断构建。
+  python3 - "$SRC/pyqt5/project.py" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as f:
+    src = f.read()
+needle = "        self.bindings['QtCore'].tags.append(plattag)\n"
+marker = 'QGIS_KYLIN_PLATFORM_TAG'
+if marker in src:
+    print('平台 tag 补丁已存在')
+elif needle not in src:
+    print('WARN: project.py 注入点变化，跳过平台 tag 补丁')
+else:
+    extra = (
+        "        # QGIS_KYLIN_PLATFORM_TAG: Qt 复合模块同样 %Include 了带\n"
+        "        # WS_X11 条件的 .sip，需要平台 tag 才能定义 Q_PID 等类型。\n"
+        "        for _b in self.bindings.values():\n"
+        "            if plattag not in _b.tags:\n"
+        "                _b.tags.append(plattag)\n")
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(src.replace(needle, needle + extra, 1))
+    print('已给所有 bindings 注入平台 tag')
+PY
   # PyQt5 5.15.6 的 .sip 是 SIP5/6 语法，configure.py 的 SIP4 分支会在
   # "Generating the C++ source for the QtCore module..." 静默中止。
   # 走 sdist 自带的 pyproject.toml（build-backend=sipbuild.api）对应的 CLI：
