@@ -106,14 +106,22 @@ done
 
 # EXPAT：sysroot 里确有完整 expat（expat.h + libexpat.so -> libexpat.so.1 ->
 # libexpat.so.1.6.11），但 FindEXPAT 经 CMAKE_PREFIX_PATH 自动探测在部分
-# runner 上不稳定，这里显式给出路径最稳。先做存在性诊断写进日志。
-_expat_inc="$SYSROOT/usr/include"
-_expat_lib="$SYSROOT/usr/lib64/libexpat.so"
+# runner 上不稳定（实测某些 runner 报 Could NOT find EXPAT）。这里把 sysroot
+# 里确凿存在的 expat 复制到 deps 前缀的 include/lib，再显式指向它；deps 前缀
+# 的 lib/include 一定会被 find_library/find_path 搜索，最稳。
+if [[ -f "$SYSROOT/usr/include/expat.h" && -e "$SYSROOT/usr/lib64/libexpat.so" ]]; then
+  mkdir -p "$DEPS_PREFIX/include" "$DEPS_PREFIX/lib"
+  cp -a "$SYSROOT/usr/include/expat.h" "$DEPS_PREFIX/include/" 2>/dev/null || true
+  cp -a "$SYSROOT/usr/include/expat_external.h" "$DEPS_PREFIX/include/" 2>/dev/null || true
+  cp -a "$SYSROOT/usr/include/expat_config.h" "$DEPS_PREFIX/include/" 2>/dev/null || true
+  cp -a "$SYSROOT/usr/lib64/libexpat.so"* "$DEPS_PREFIX/lib/" 2>/dev/null || true
+fi
+_expat_inc="$DEPS_PREFIX/include"
+_expat_lib="$DEPS_PREFIX/lib/libexpat.so"
 if [[ ! -f "$_expat_inc/expat.h" || ! -e "$_expat_lib" ]]; then
-  _expat_inc="/usr/include"; _expat_lib="/usr/lib64/libexpat.so"
+  _expat_inc="$SYSROOT/usr/include"; _expat_lib="$SYSROOT/usr/lib64/libexpat.so"
 fi
 log "EXPAT hints: inc=$_expat_inc lib=$_expat_lib"
-ls -l "$_expat_inc/expat.h" "$_expat_lib" 2>&1 | log
 
 rm -rf "$QGIS_BUILD"
 set -o pipefail
