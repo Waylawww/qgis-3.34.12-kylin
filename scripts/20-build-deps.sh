@@ -361,10 +361,23 @@ dep_exiv2() {
 
 dep_qt() {
   fetch_source QT "$QT_TARBALL" "$SRC/qt" configure || return 1
-  # Qt 5.15.2 在 GCC 11 下需要 <limits>（std::numeric_limits）
+  # Qt 5.15.2 在 GCC 11 下需要 <limits>（std::numeric_limits）。
+  # 但 Qt 自带 zlib 的 .c 文件也会包含 qglobal.h，无条件插入会让 C 编译器
+  # 报 "limits: No such file or directory"（本轮真实失败点 adler32.c）。
+  # 只在 C++ 编译单元引入，并清理上一轮遗留的无条件插入。
   local qglobal="$SRC/qt/qtbase/src/corelib/global/qglobal.h"
-  if [[ -f "$qglobal" ]] && ! grep -q '#include <limits>' "$qglobal"; then
-    sed -i '1i #include <limits>' "$qglobal"
+  if [[ -f "$qglobal" ]]; then
+    if [[ "$(sed -n '1p' "$qglobal")" == '#include <limits>' ]]; then
+      tail -n +2 "$qglobal" > "$qglobal.tmp" && mv -f "$qglobal.tmp" "$qglobal"
+    fi
+    if ! grep -qF 'qgis-kylin-gcc11-limits' "$qglobal"; then
+      {
+        printf '%s\n' '/* qgis-kylin-gcc11-limits */' \
+          '#if defined(__cplusplus)' '#include <limits>' '#endif'
+        cat "$qglobal"
+      } > "$qglobal.tmp"
+      mv -f "$qglobal.tmp" "$qglobal"
+    fi
   fi
   local b="$BUILD/qt"
   rm -rf "$b"; mkdir -p "$b"; cd "$b"
