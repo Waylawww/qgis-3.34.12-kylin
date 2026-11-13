@@ -49,13 +49,27 @@ if [[ "${GCC_LIBDIR}" == "NOT_FOUND" || ! -d "${GCC_LIBDIR}" ]]; then
   GCC_LIBDIR=""
 fi
 
-export PATH="${DEPS_PREFIX}/bin:$PATH"
-export PYTHONPATH="${DEPS_PREFIX}/lib/python3.7/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+PY_SITE="${DEPS_PREFIX}/lib/python3.7/site-packages"
+export PATH="${DEPS_PREFIX}/bin:${PY_SITE}/bin:$PATH"
+export PYTHONPATH="${PY_SITE}${PYTHONPATH:+:$PYTHONPATH}"
 export LD_LIBRARY_PATH="${GCC_LIBDIR:+${GCC_LIBDIR}:}${DEPS_PREFIX}/lib:${DEPS_PREFIX}/lib64:${SYSROOT}/usr/lib64:${LD_LIBRARY_PATH:-}"
 export PKG_CONFIG_PATH="${DEPS_PREFIX}/lib/pkgconfig:${DEPS_PREFIX}/lib64/pkgconfig:${SYSROOT}/usr/lib64/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
 export CMAKE_PREFIX_PATH="${DEPS_PREFIX};${SYSROOT}/usr"
 export CPPFLAGS="-I${DEPS_PREFIX}/include -I${SYSROOT}/usr/include ${CPPFLAGS:-}"
 export LDFLAGS="-L${DEPS_PREFIX}/lib -L${DEPS_PREFIX}/lib64 -L${SYSROOT}/usr/lib64 ${LDFLAGS:-}"
+
+# QGIS 3.34 的 cmake/FindPyQt5.cmake 在 SIP>=5 分支把 METADATA / PyQt5 /
+# PyQt5/bindings 都拼在 ${Python_SITEARCH} 上；find_package(Python) 给的是
+# /usr/lib64/python3.7/site-packages，runner 无写权限、也不会有我们的 PyQt5。
+# 改用环境变量把探测路径指到私有 site-packages（补丁幂等）。
+export QGIS_PY_SITE="$PY_SITE"
+FIND_PYQT5="${QGIS_SRC}/cmake/FindPyQt5.cmake"
+if [[ -f "$FIND_PYQT5" ]] && ! grep -q 'QGIS_PY_SITE' "$FIND_PYQT5"; then
+  sed -i 's|${Python_SITEARCH}|$ENV{QGIS_PY_SITE}|g' "$FIND_PYQT5"
+  log "FindPyQt5.cmake 的 SIP>=5 探测路径已改到 $PY_SITE"
+fi
+grep -q 'QGIS_PY_SITE' "$FIND_PYQT5" \
+  || die "FindPyQt5.cmake 补丁失败: $FIND_PYQT5"
 
 # --- CMake 配置 -------------------------------------------------------------
 # 显式关掉麒麟主机上没有的可选依赖：GRASS / spatialite / PDAL / EPT / COPC /
@@ -85,6 +99,11 @@ cmake -S "$QGIS_SRC" -B "$QGIS_BUILD" -G Ninja \
   -DWITH_QSCIAPI:BOOL=OFF -DWITH_CUSTOM_WIDGETS:BOOL=OFF \
   -DWITH_STAGED_PLUGINS:BOOL=OFF -DWITH_CRASH_HANDLER:BOOL=OFF \
   -DWITH_INTERNAL_MDAL:BOOL=ON -DWITH_INTERNAL_POLY2TRI:BOOL=ON \
+  -DPython_SITEARCH:PATH="$PY_SITE" \
+  -DSIP_BUILD_EXECUTABLE:FILEPATH="${DEPS_PREFIX}/bin/sip-build" \
+  -DQMAKE_EXECUTABLE:FILEPATH="${DEPS_PREFIX}/bin/qmake" \
+  -DPYQT5_MOD_DIR:PATH="$PY_SITE/PyQt5" \
+  -DPYQT5_SIP_DIR:PATH="$PY_SITE/PyQt5/bindings" \
   2>&1 | tee "${LOG}/qgis-cmake.log"
 
 grep -E '^(WITH_3D|WITH_BINDINGS|WITH_DESKTOP|WITH_QGIS_PROCESS|CMAKE_INSTALL_PREFIX|CMAKE_INSTALL_RPATH):' \

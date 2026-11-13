@@ -14,7 +14,9 @@
 #   4. 解压不再假定 `--strip-components=1`，改为自动展开单一顶层目录。
 #   5. 所有产物校验同时看 lib/ 与 lib64/。
 #   6. QScintilla 2.13.3 的库在 src/（不是 Qt4Qt5/）。
-#   7. SIP/PyQt5 改走 SIP4 + configure.py 传统路线（PyQt5 PyPI sdist）。
+#   7. SIP/PyQt5 走 SIP6 + PyQt-builder + sip-install（SIP4 解析不了
+#      PyQt5 5.15.6 的 .sip 语法）；qwt 的 make install 会写 /usr/local，
+#      改为直接复制编译产物到私有前缀。
 set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
@@ -25,10 +27,11 @@ SRC="${CACHE_DIR}/src"
 BUILD="${WORK_DIR}/deps-build"
 STAMPS="${DEPS_PREFIX}/.stamps"
 SYSROOT="${DEPS_PREFIX}/sysroot"
+WHL_DIR="${CACHE_DIR}/wheels"
 LOG="${REPORT_DIR}/logs"
 STATUS_FILE="${REPORT_DIR}/deps-status.tsv"
 PY_SITE="$DEPS_PREFIX/lib/python3.7/site-packages"
-mkdir -p "$SRC" "$BUILD" "$STAMPS" "$SYSROOT" "$LOG" "$CACHE_DIR/rpms" "$PY_SITE"
+mkdir -p "$SRC" "$BUILD" "$STAMPS" "$SYSROOT" "$LOG" "$CACHE_DIR/rpms" "$WHL_DIR" "$PY_SITE"
 : > "$STATUS_FILE"
 declare -A STATUS
 FAILURES=()
@@ -124,6 +127,8 @@ validate_archive() {
     *.tar.gz|*.tgz|*.gz)      gzip -t "$f" >/dev/null 2>&1 && ok=1 ;;
     *.tar.xz|*.txz|*.xz)      xz -t "$f" >/dev/null 2>&1 && ok=1 ;;
     *.tar.bz2|*.tbz2|*.bz2)   bzip2 -t "$f" >/dev/null 2>&1 && ok=1 ;;
+    # Python wheel 是 zip，tar -tf 必然失败；用标准库 CRC 自检（兼容 3.7）。
+    *.whl)                    python3 -c 'import sys, zipfile; sys.exit(0 if zipfile.ZipFile(sys.argv[1]).testzip() is None else 1)' "$f" >/dev/null 2>&1 && ok=1 ;;
     *)                        tar -tf "$f" >/dev/null 2>&1 && ok=1 ;;
   esac
   if (( ! ok )); then return 1; fi
@@ -310,6 +315,22 @@ fi
 printf '%s\n' "${GCC_LIBDIR:-NOT_FOUND}" > "$REPORT_DIR/gcc-runtime.txt"
 setup_flags
 
+# --- SIP4 -> SIP6 迁移 ------------------------------------------------------
+# 之前成功构建的是 SIP 4.19.25，$STAMPS/sip.ok 会让 run_dep 直接 CACHED 跳过，
+# 结果 dep_pyqt5 仍然拿到 SIP4 的 sipgen，必然再次失败。这里按"能否 import
+# sipbuild/pyqtbuild"判断真实状态，而不是只看 stamp。
+if [[ -f "$STAMPS/sip.ok" ]] && \
+   ! python3 -c 'import sipbuild, pyqtbuild' >/dev/null 2>&1; then
+  log "D0: 检测到旧 SIP4 安装，清理 stamp 与产物，切换到 SIP6"
+  rm -f "$STAMPS/sip.ok" "$STAMPS/pyqt5.ok"
+  rm -f "$DEPS_PREFIX/bin/sip" "$DEPS_PREFIX/bin/sip-build" \
+        "$DEPS_PREFIX/include/sip.h" \
+        "$PY_SITE/sip.so" "$PY_SITE/sipconfig.py" \
+        "$PY_SITE/sipdistutils.py" "$PY_SITE/sip.pyi"
+  rm -rf "$PY_SITE"/sip-4.*.dist-info "$PY_SITE/PyQt5" \
+         "$DEPS_PREFIX/share/sip/PyQt5" "$SRC/pyqt5"
+fi
+
 # --- D1..Dn: 各依赖 -------------------------------------------------------
 dep_geos() {
   fetch_source GEOS "$GEOS_TARBALL" "$SRC/geos" CMakeLists.txt || return 1
@@ -412,13 +433,18 @@ dep_qt() {
 dep_qwt() {
   fetch_source QWT "qwt-${QWT_VERSION}.tar.bz2" "$SRC/qwt" qwt.pro qwtconfig.pri || return 1
   qmake_ready || return 1
-  local cfg="$SRC/qwt/qwtconfig.pri"
-  sed -i "s|^#\?QWT_INSTALL_PREFIX.*|QWT_INSTALL_PREFIX = $DEPS_PREFIX|" "$cfg"
   cd "$SRC/qwt"
   "$DEPS_PREFIX/bin/qmake" qwt.pro -r CONFIG+=release || return 1
   make -j"$JOBS" || return 1
-  make install || return 1
-  [[ -f "$DEPS_PREFIX/include/qwt/qwt.h" ]] || installed_lib libqwt-qt5.so
+  # 实测 dep-qwt.log：qwtconfig.pri 的前缀行带空格且被注释，旧的
+  # sed 's|^#\?QWT_INSTALL_PREFIX.*|...|' 没匹配上，qmake 仍用默认
+  # /usr/local/qwt-$$QWT_VERSION，make install 报 "mkdir: 权限不够"。
+  # QGIS cmake/FindQwt.cmake 只用 find_library(libqwt*) + find_path(qwt.h)，
+  # 因此直接把编译产物复制到私有前缀，完全不调用 make install。
+  mkdir -p "$DEPS_PREFIX/include/qwt" "$DEPS_PREFIX/lib"
+  cp -f src/*.h "$DEPS_PREFIX/include/qwt/" || return 1
+  cp -a lib/libqwt.so* "$DEPS_PREFIX/lib/" || return 1
+  [[ -f "$DEPS_PREFIX/include/qwt/qwt.h" ]] && installed_lib libqwt.so
 }
 
 dep_qscintilla() {
@@ -466,37 +492,80 @@ dep_qtkeychain() {
 }
 
 dep_sip() {
-  fetch_source SIP "sip-${SIP_VERSION}.tar.gz" "$SRC/sip" configure.py || return 1
-  mkdir -p "$PY_SITE" "$DEPS_PREFIX/share/sip"
-  cd "$SRC/sip"
-  python3 configure.py --bindir="$DEPS_PREFIX/bin" --incdir="$DEPS_PREFIX/include" \
-    --sipdir="$DEPS_PREFIX/share/sip" --destdir="$PY_SITE" || return 1
-  make -j"$JOBS" || return 1
-  make install || return 1
+  mkdir -p "$WHL_DIR" "$PY_SITE" "$DEPS_PREFIX/bin"
+  fetch "$WHL_DIR/$SIP_WHEEL" "${SIP_URLS[@]}" || return 1
+  fetch "$WHL_DIR/$PYQT_BUILDER_WHEEL" "${PYQT_BUILDER_URLS[@]}" || return 1
+  # pip --target 把 sipbuild / pyqtbuild 与 dist-info 装进私有 PY_SITE，
+  # 不写 /usr、不需要 sudo。刻意不走 PEP517：sipbuild/api.py 没有
+  # prepare_metadata_for_build_wheel，pip 20.2.2 会直接报错。
+  python3 -m pip install --no-cache-dir --no-deps --upgrade --target "$PY_SITE" \
+    "$WHL_DIR/$SIP_WHEEL" "$WHL_DIR/$PYQT_BUILDER_WHEEL" || return 1
+  # QGIS cmake/FindSIP.cmake 的 SIP>=5 分支 FIND_PROGRAM(sip-build)，
+  # cmake/SIPMacros.cmake 也直接调 sip-build，必须在 $DEPS_PREFIX/bin 里。
+  # 固定写 wrapper，不依赖 pip 生成 scripts 的位置。
+  cat > "$DEPS_PREFIX/bin/sip-build" <<'EOF'
+#!/usr/bin/env bash
+exec python3 -c 'import sys; from sipbuild.tools.build import main; sys.exit(main())' "$@"
+EOF
+  cat > "$DEPS_PREFIX/bin/sip-install" <<'EOF'
+#!/usr/bin/env bash
+exec python3 -c 'import sys; from sipbuild.tools.install import main; sys.exit(main())' "$@"
+EOF
+  chmod 755 "$DEPS_PREFIX/bin/sip-build" "$DEPS_PREFIX/bin/sip-install"
   PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'import sip; print(sip.SIP_VERSION_STR)'
+    'import sipbuild, pyqtbuild; print("SIP", sipbuild.version.SIP_VERSION_STR)'
+  [[ -x "$DEPS_PREFIX/bin/sip-build" ]]
 }
 
 dep_pyqt5() {
   fetch_source PYQT5 "PyQt5-${PYQT5_VERSION}.tar.gz" "$SRC/pyqt5" \
-    configure.py sip/QtCore/QtCoremod.sip || return 1
+    pyproject.toml project.py sip/QtCore/QtCoremod.sip || return 1
   qmake_ready || return 1
-  if [[ ! -x "$DEPS_PREFIX/bin/sip" ]]; then
-    warn "SIP 未就绪：缺 $DEPS_PREFIX/bin/sip"
+  if ! PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+       'import sipbuild, pyqtbuild' >/dev/null 2>&1; then
+    warn "  SIP6/PyQt-builder 未就绪（dep_sip 必须先成功）"
     return 1
   fi
-  mkdir -p "$PY_SITE/PyQt5" "$DEPS_PREFIX/share/sip/PyQt5"
+  mkdir -p "$PY_SITE/PyQt5" "$DEPS_PREFIX/bin" "$BUILD/pyqt5"
   cd "$SRC/pyqt5"
-  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 configure.py \
-    --confirm-license --qmake="$DEPS_PREFIX/bin/qmake" \
-    --sip="$DEPS_PREFIX/bin/sip" --sip-incdir="$DEPS_PREFIX/include" \
-    --bindir="$DEPS_PREFIX/bin" --destdir="$PY_SITE/PyQt5" \
-    --sipdir="$DEPS_PREFIX/share/sip/PyQt5" \
-    --no-designer-plugin --no-qml-plugin --no-tools || return 1
-  make -j"$JOBS" || return 1
-  make install || return 1
+  # PyQt5 5.15.6 的 .sip 是 SIP5/6 语法，configure.py 的 SIP4 分支会在
+  # "Generating the C++ source for the QtCore module..." 静默中止。
+  # 走 sdist 自带的 pyproject.toml（build-backend=sipbuild.api）对应的 CLI：
+  #   --target-dir / --scripts-dir / --build-dir 来自 sipbuild/project.py
+  #   --qmake / --jobs                          来自 pyqtbuild/builder.py
+  #   --confirm-license / --qt-shared / --no-* 来自 sdist 的 project.py
+  # 安装后 $PY_SITE 里会有 PyQt5/*.so、PyQt5/bindings/*.sip、
+  # PyQt5-5.15.6.dist-info/METADATA —— 正是 QGIS FindPyQt5.cmake 需要的布局。
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" \
+    "$DEPS_PREFIX/bin/sip-install" \
+      --confirm-license --qt-shared \
+      --qmake="$DEPS_PREFIX/bin/qmake" \
+      --target-dir="$PY_SITE" \
+      --scripts-dir="$DEPS_PREFIX/bin" \
+      --build-dir="$BUILD/pyqt5" \
+      --jobs="$JOBS" \
+      --no-designer-plugin --no-qml-plugin \
+      --no-dbus-python --no-tools || return 1
+  # QGIS cmake/FindPyQt5.cmake 的 SIP>=5 分支 FIND_PROGRAM(pyuic5)；
+  # --no-tools 不生成它，补上 uic 包与 wrapper 保证探测不落空。
+  if [[ ! -d "$PY_SITE/PyQt5/uic" && -d "$SRC/pyqt5/pyuic/uic" ]]; then
+    cp -a "$SRC/pyqt5/pyuic/uic" "$PY_SITE/PyQt5/" || return 1
+  fi
+  if [[ ! -x "$DEPS_PREFIX/bin/pyuic5" ]]; then
+    cat > "$DEPS_PREFIX/bin/pyuic5" <<'EOF'
+#!/usr/bin/env python3
+from PyQt5.uic.pyuic import main
+main()
+EOF
+    chmod 755 "$DEPS_PREFIX/bin/pyuic5"
+  fi
+  local qcore
+  qcore="$(find "$PY_SITE/PyQt5" -maxdepth 1 -name 'QtCore*.so' -print -quit)"
+  [[ -n "$qcore" ]] || return 1
+  [[ -f "$PY_SITE/PyQt5/bindings/QtCore/QtCoremod.sip" ]] || return 1
+  ls "$PY_SITE"/PyQt5-*.dist-info/METADATA >/dev/null 2>&1 || return 1
   PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'from PyQt5 import QtCore; print(QtCore.PYQT_VERSION_STR)'
+    'from PyQt5 import QtCore; print("PyQt5", QtCore.PYQT_VERSION_STR)'
 }
 
 for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
