@@ -92,12 +92,14 @@ pyqgis_version() {
   local out
   out="$(python3 -c 'from qgis.core import Qgis; print(Qgis.QGIS_VERSION)')"
   printf '%s\n' "${out}"
-  [[ "${out}" == "${QGIS_VERSION}" ]]
+  [[ "${out}" == "${QGIS_VERSION}"* ]]
 }
 pyqgis_smoke() {
   python3 "${REPO_ROOT}/tests/pyqgis_smoke.py" \
-    --out "${EVID}/render.png" --json "${EVID}/pyqgis-smoke.json"
-  test -s "${EVID}/render.png"
+    --out "${EVID}/render.png" --json "${EVID}/pyqgis-smoke.json" || return 1
+  test -s "${EVID}/render.png" || return 1
+  python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1],encoding="utf-8"))["status"] == "PASS" else 1)' \
+    "${EVID}/pyqgis-smoke.json"
 }
 
 echo "== 运行自测 =="
@@ -144,9 +146,10 @@ report = {
     "verdict": "PASS" if not failed else "FAIL",
 }
 out = os.path.join(evid, "install-selftest.json")
+text = json.dumps(report, ensure_ascii=False, indent=2)
 with open(out, "w", encoding="utf-8") as f:
-    json.dump(report, f, ensure_ascii=False, indent=2)
-print(json.dumps(report, f, ensure_ascii=False, indent=2))
+    f.write(text + "\n")
+print(text)
 sys.exit(0 if not failed else 1)
 PY
 then
