@@ -48,8 +48,12 @@ test -x "${ROOT}/usr/bin/qgis" || die "RPM 中缺少 /usr/bin/qgis（Desktop）"
 test -x "${ROOT}/usr/bin/qgis_process" || die "RPM 中缺少 /usr/bin/qgis_process"
 test -n "$(find "${ROOT}" -name 'libqgis_analysis.so.*' -print -quit)" || die "缺少 qgis analysis 库"
 
-# 严禁把 Debian/Ubuntu 体系的东西塞进 RPM
-if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path '*x86_64-linux-gnu*' \) -print -quit | grep -q .; then
+# 严禁把 Debian/Ubuntu 体系的东西塞进 RPM。
+# 注意：x86_64-linux-gnu 是 Python C 扩展的标准 arch 后缀
+# （如 PyQt5/sip.cpython-37m-x86_64-linux-gnu.so），所有 Linux 发行版（含
+# 麒麟/RHEL）都这样命名，并非 Debian 专属；因此只匹配真正的 Debian 库目录
+# （路径中间的 */x86_64-linux-gnu/*），避免误伤合法的 .so 文件名后缀。
+if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path '*/x86_64-linux-gnu/*' \) -print -quit | grep -q .; then
   die "检测到 Debian/Ubuntu 体系文件：本工程要求麒麟原生 RPM 依赖体系"
 fi
 if grep -RIl 'ubuntu\|debian' "${REPORT_DIR}/rpm/"*.requires.txt 2>/dev/null | grep -q .; then
