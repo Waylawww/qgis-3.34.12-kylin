@@ -354,9 +354,8 @@ fi
 # 因此必须让 dep_pyqt5 重跑（走快速路径，只补工具、不重编 35 个绑定）。
 if [[ -f "$STAMPS/pyqt5.ok" ]] && \
    { [[ ! -x "$DEPS_PREFIX/bin/pyrcc5" ]] || \
-     [[ ! -f "$PY_SITE/PyQt5/pyrcc.abi3.so" ]] || \
-     [[ ! -f "$PY_SITE/PyQt5/pylupdate.abi3.so" ]]; }; then
-  log "D0: PyQt5 缺 pyrcc5，清理 stamp 后补齐工具"
+     [[ ! -f "$DEPS_PREFIX/lib/pyqt5-qt5/libQt5Core.so.5" ]]; }; then
+  log "D0: PyQt5 pyrcc5 / Qt5 runtime 缺失，清理 stamp 后重建"
   rm -f "$STAMPS/pyqt5.ok"
 fi
 
@@ -595,18 +594,46 @@ PY
 }
 
 # QGIS cmake/PyQtMacros.cmake 需要 pyrcc5（把 .qrc 编成 .py）。
-# QGIS cmake/PyQtMacros.cmake 需要 pyrcc5 把 .qrc 编译成 .py。
-# run 69 起，用 PyQt5 wheel 里的 pyrcc 二进制加载失败
-# （symbol _ZdlPvm version Qt_5 not defined in libQt5Core.so.5），
-# 因为它是针对别版本的 Qt 编的。改用 sip-install 从 PyQt5 sdist
-# 源码编译 pyrcc 模块（去掉 --no-tools），由我们自己的 Qt 5.15.2
-# 编译，保证版本与符号一致。
+# run 69 起，PyQt5 wheel 里的 pyrcc 二进制加载不动（symbol _ZdlPvm version
+# Qt_5 not defined in libQt5Core.so.5），因为配的是别版本的 Qt。
+# 解决：用 PyQt5_Qt5 wheel 里的 Qt 5.15.2 运行库 + PyQt5 wheel 里的 pyrcc，
+# 通过 pyrcc5 wrapper 的 LD_LIBRARY_PATH 指向 wheel 的 Qt。
 install_pyqt5_tools() {
-  cp -f "$SRC/pyqt5/pyrcc/pyrcc_main.py" "$PY_SITE/PyQt5/pyrcc_main.py" || return 1
+  local whl="$WHL_DIR/$PYQT5_TOOLS_WHEEL"
+  fetch "$whl" "${PYQT5_TOOLS_URLS[@]}" || return 1
+  python3 - "$whl" "$PY_SITE" <<'PY' || return 1
+import os, sys, zipfile
+
+whl, site = sys.argv[1], sys.argv[2]
+os.makedirs(os.path.join(site, 'PyQt5'), exist_ok=True)
+needed = ('PyQt5/pyrcc.abi3.so', 'PyQt5/pyrcc_main.py')
+with zipfile.ZipFile(whl) as z:
+    names = z.namelist()
+    missing = [n for n in needed if n not in names]
+    if missing:
+        print('MISSING', missing)
+        sys.exit(1)
+    for n in needed:
+        z.extract(n, site)
+        print('installed', n)
+PY
+  local whl2="$WHL_DIR/$PYQT5_QT5_WHEEL"
+  fetch "$whl2" "${PYQT5_QT5_URLS[@]}" || return 1
+  python3 - "$whl2" "$DEPS_PREFIX/lib/pyqt5-qt5" <<'PY' || return 1
+import os, sys, zipfile
+
+whl, dest = sys.argv[1], sys.argv[2]
+os.makedirs(dest, exist_ok=True)
+with zipfile.ZipFile(whl) as z:
+    for n in z.namelist():
+        if n.startswith('PyQt5/Qt5/') and not n.endswith('/'):
+            z.extract(n, dest)
+PY
   cat > "$DEPS_PREFIX/bin/pyrcc5" <<'EOF'
-#!/usr/bin/env python3
-from PyQt5.pyrcc_main import main
-main()
+#!/bin/sh
+DEPS=/opt/actions-runner/_work/qgis-3.34.12-kylin/_qgis-334-deps
+export LD_LIBRARY_PATH="${DEPS}/lib/pyqt5-qt5:${DEPS}/lib64:${DEPS}/lib:/usr/lib64:/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec /usr/bin/python3 -c 'from PyQt5.pyrcc_main import main; main()' "$@"
 EOF
   chmod 755 "$DEPS_PREFIX/bin/pyrcc5"
 }
@@ -688,7 +715,7 @@ PY
       --build-dir="$BUILD/pyqt5" \
       --jobs="$JOBS" \
       --no-designer-plugin --no-qml-plugin \
-      --no-dbus-python || return 1
+      --no-dbus-python --no-tools || return 1
   # QGIS cmake/FindPyQt5.cmake 的 SIP>=5 分支 FIND_PROGRAM(pyuic5)；
   # 现在 sip-install 会正常构建 tools，uic 包与 wrapper 只作兜底。
   if [[ ! -d "$PY_SITE/PyQt5/uic" && -d "$SRC/pyqt5/pyuic/uic" ]]; then
