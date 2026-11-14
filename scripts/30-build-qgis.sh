@@ -452,6 +452,11 @@ Summary:        QGIS ${QGIS_VERSION} native build for Kylin V10 x86_64
 License:        GPLv2+
 BuildArch:      x86_64
 AutoReqProv:    no
+# Kylin V10 的默认 %__python 指向 /usr/bin/python（Python 2），而本包全部 .py
+# （QGIS 自身插件、PyQt5 / sipbuild / packaging 等）均为 Python 3 代码，用 Py2
+# 预编译会在 brp-python-bytecompile 阶段全面 SyntaxError 令 rpmbuild 失败。
+# 改用系统 python3 做字节码编译（QGIS 即以 python3 编译/运行）。
+%global __python %{__python3}
 %description
 QGIS ${QGIS_VERSION} compiled natively on Kylin V10 / Hygon C86 with a private
 Qt 5.15 / PROJ / GEOS / GDAL / SIP runtime under ${PREFIX_IN_RPM}.
