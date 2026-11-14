@@ -422,6 +422,63 @@ for d in proj gdal sip PyQt5 Qsci; do
 done
 log "私有依赖库文件数: $(find "${DEPS_STAGE}" -type f -name '*.so*' | wc -l)"
 
+# --- 私有运行库自包含 + 统一 ELF RPATH --------------------------------------
+# 2026-11-14 真机部署反馈修复：
+#  1) 所有 C++ 代码由 GCC 11 编译，需要 libstdc++.so.6 提供 GLIBCXX_3.4.29 /
+#     CXXABI_1.3.13；麒麟 V10 系统 /usr/lib64 那份来自 gcc-7.3.0，最高只到
+#     约 GLIBCXX_3.4.25。原实现只在构建期把 GCC_LIBDIR 放进 LD_LIBRARY_PATH，
+#     没随 RPM 安装，目标机 qgis 启动即报 "version `GLIBCXX_3.4.29' not found"。
+#  2) 依赖阶段用 -Wl,-rpath,$DEPS_PREFIX/lib{,64} 编译 Qt/GEOS/GDAL 等，这些库
+#     自身 RUNPATH 写死了构建机绝对路径（/opt/actions-runner/_work/...）。干净
+#     目标机上该路径不存在；构建机上则会误加载构建机原件而非 RPM 自带库。
+#     用 patchelf 把 STAGE 下所有 ELF 统一改成安装后的绝对前缀。
+if [[ -n "${GCC_LIBDIR}" ]]; then
+  _libstdcpp="$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6" 2>/dev/null || true)"
+  if [[ -n "${_libstdcpp}" && -f "${_libstdcpp}" ]] \
+     && grep -aq 'GLIBCXX_3\.4\.29' "${_libstdcpp}" 2>/dev/null; then
+    cp -L "${_libstdcpp}" "${DEPS_STAGE}/lib/$(basename "${_libstdcpp}")"
+    # 用相对链接，避免符号链接指向构建机绝对路径
+    ln -sfn "$(basename "${_libstdcpp}")" "${DEPS_STAGE}/lib/libstdc++.so.6"
+    log "已打包 GCC11 libstdc++: deps/lib/$(basename "${_libstdcpp}")"
+  else
+    die "GCC11 libstdc++ 缺失或不含 GLIBCXX_3.4.29: GCC_LIBDIR=${GCC_LIBDIR}"
+  fi
+else
+  die "未定位到 GCC11 运行库目录（gcc-runtime.txt）；拒绝打出需要高版本 C++ ABI 却不含运行库的 RPM"
+fi
+
+FINAL_RPATH="${PREFIX_IN_RPM}/lib:${DEPS_IN_RPM}/lib:${DEPS_IN_RPM}/lib64"
+need_cmd patchelf "统一 ELF RPATH"
+need_cmd readelf "ELF RPATH 门禁"
+: > "${LOG}/patchelf.log"
+_patched=0
+_patch_fail=0
+while IFS= read -r -d '' _f; do
+  readelf -h "${_f}" >/dev/null 2>&1 || continue
+  if patchelf --set-rpath "${FINAL_RPATH}" "${_f}" >>"${LOG}/patchelf.log" 2>&1; then
+    _patched=$((_patched+1))
+  else
+    warn "patchelf 失败: ${_f#"${STAGE}"}"
+    _patch_fail=$((_patch_fail+1))
+  fi
+done < <(find "${STAGE}${PREFIX_IN_RPM}" -type f \
+              \( -name '*.so' -o -name '*.so.*' -o -name 'qgis' -o -name 'qgis_*' \) -print0)
+log "patchelf: 成功 ${_patched} 个 ELF，失败 ${_patch_fail} 个（详见 logs/patchelf.log）"
+(( _patched > 0 )) || die "patchelf 未处理任何 ELF，RPATH 未统一"
+
+# 打包前门禁：STAGE 内不允许残留任何构建机绝对路径
+_leaks=0
+while IFS= read -r -d '' _f; do
+  readelf -h "${_f}" >/dev/null 2>&1 || continue
+  _rp="$(readelf -d "${_f}" 2>/dev/null | grep -E 'RPATH|RUNPATH' || true)"
+  if grep -Eq '_qgis-334-|actions-runner|/rpmbuild|BUILDROOT|/work/|/usr/local/gcc11' <<<"${_rp}"; then
+    warn "RPATH 仍泄漏构建机路径: ${_f#"${STAGE}"} -> ${_rp}"
+    _leaks=$((_leaks+1))
+  fi
+done < <(find "${STAGE}${PREFIX_IN_RPM}" -type f \
+              \( -name '*.so' -o -name '*.so.*' -o -name 'qgis' -o -name 'qgis_*' \) -print0)
+(( _leaks == 0 )) || die "${_leaks} 个 ELF 残留构建机 RPATH，拒绝打包"
+
 # --- /usr/bin wrapper -------------------------------------------------------
 mkdir -p "${STAGE}/usr/bin"
 for app in qgis qgis_process; do

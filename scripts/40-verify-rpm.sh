@@ -48,6 +48,15 @@ test -x "${ROOT}/usr/bin/qgis" || die "RPM 中缺少 /usr/bin/qgis（Desktop）"
 test -x "${ROOT}/usr/bin/qgis_process" || die "RPM 中缺少 /usr/bin/qgis_process"
 test -n "$(find "${ROOT}" -name 'libqgis_analysis.so.*' -print -quit)" || die "缺少 qgis analysis 库"
 
+# RPM 必须自带 GCC11 libstdc++（GLIBCXX_3.4.29 / CXXABI_1.3.13）。
+# 麒麟 V10 系统 /usr/lib64/libstdc++.so.6 来自 gcc-7.3.0，最高约
+# GLIBCXX_3.4.25；缺这份私有运行库时 qgis 在目标机上直接启动失败。
+STDCPP="$(find "${ROOT}" -type f -name 'libstdc++.so.6*' -print -quit)"
+[[ -n "${STDCPP}" ]] || die "RPM 未自带 libstdc++.so.6：目标机 gcc-7.3 运行库不满足 GLIBCXX_3.4.29"
+grep -aq 'GLIBCXX_3\.4\.29' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 GLIBCXX_3.4.29: ${STDCPP}"
+grep -aq 'CXXABI_1\.3\.13' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 CXXABI_1.3.13: ${STDCPP}"
+log "  GCC11 libstdc++ 已随包: ${STDCPP#"${ROOT}"}"
+
 # 严禁把 Debian/Ubuntu 体系的东西塞进 RPM。
 # 注意：x86_64-linux-gnu 是 Python C 扩展的标准 arch 后缀
 # （如 PyQt5/sip.cpython-37m-x86_64-linux-gnu.so），所有 Linux 发行版（含
@@ -84,14 +93,15 @@ while IFS= read -r -d '' f; do
     warn "ldd 有缺失的库文件: ${f#"${ROOT}"}"
     missing=$((missing+1))
   fi
-  # 符号版本不匹配（如 GLIBCXX_3.4.29 / CXXABI_1.3.13）：说明目标系统运行库
-  # （libstdc++/glibc）版本低于编译时使用的高版本。这属于部署侧需升级运行库
-  # 的环境问题，并非 RPM 打包缺陷，降级为 WARN 不阻断构建。
+  # 符号版本不匹配（GLIBCXX_3.4.29 / CXXABI_1.3.13 等）：真机上表现就是
+  # qgis 启动直接失败。修复由 30-build-qgis.sh 随包提供 GCC11 libstdc++ 完成，
+  # 绝不能降级为 WARN —— 此前降级导致缺陷 RPM 被判 verdict=PASS 并发布。
   if grep -Eq "version \`(GLIBC|GLIBCXX|CXXABI)[^']*' not found" <<<"$out"; then
-    warn "ldd 符号版本不匹配（目标系统运行库需更新）: ${f#"${ROOT}"}"
+    warn "ldd 符号版本不匹配: ${f#"${ROOT}"}"
+    missing=$((missing+1))
   fi
 done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' \) -print0)
-[[ "${missing}" -eq 0 ]] || die "${missing} 个 ELF 存在 'not found' 依赖；请用 dnf repoquery 补齐原生 RPM 依赖"
+[[ "${missing}" -eq 0 ]] || die "${missing} 个 ELF 存在 'not found' 依赖或符号版本不匹配（检查 RPM 是否自带 GCC11 libstdc++、私有依赖是否齐全）"
 
 # --- 5. ISA / ABI ------------------------------------------------------------
 bash "${REPO_ROOT}/scripts/check-isa.sh" "${ROOT}"
@@ -108,6 +118,7 @@ out = {
     "checks": {
         "version_lock": "PASS", "arch_x86_64": "PASS", "3d_library": "PASS",
         "pyqgis": "PASS", "desktop_binary": "PASS", "ldd": "PASS",
+        "gcc11_libstdcxx": "PASS",
         "isa_glibc": json.load(open(os.path.join(rep, "isa-report.json"), encoding="utf-8"))["verdict"],
     },
     "verdict": "PASS",
