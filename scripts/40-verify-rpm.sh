@@ -65,6 +65,13 @@ fi
 # 解包校验必须显式注入解包根内的私有库目录，否则 ldd 会把它们全部误报成
 # "not found"。运行时由 /usr/bin/qgis wrapper 做同样的注入。
 export LD_LIBRARY_PATH="${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib:${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib64:${ROOT}/opt/qgis-${QGIS_VERSION}/lib:${LD_LIBRARY_PATH:-}"
+# QGIS 二进制链接时写死绝对 RPATH（/opt/qgis-3.34.12/lib 等）指向自带私有依赖，
+# 而 RPATH 优先级高于 LD_LIBRARY_PATH。解包校验时真实前缀不存在，ld 仍会优先
+# 走绝对 RPATH 而把私有库误报成 not found。临时把真实前缀软链到解包根，让绝对
+# RPATH 在校验环境下也能解析（构建目录下该前缀持久，软链可跨次复用；已存在则跳过）。
+if [[ -d "${ROOT}/opt/qgis-${QGIS_VERSION}" ]] && [[ ! -e "/opt/qgis-${QGIS_VERSION}" ]]; then
+  ln -sfn "${ROOT}/opt/qgis-${QGIS_VERSION}" "/opt/qgis-${QGIS_VERSION}" 2>/dev/null || true
+fi
 LDD_LOG="${REPORT_DIR}/rpm/ldd.txt"
 : > "${LDD_LOG}"
 missing=0
