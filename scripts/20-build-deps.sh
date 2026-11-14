@@ -632,7 +632,7 @@ PY
   cat > "$DEPS_PREFIX/bin/pyrcc5" <<'EOF'
 #!/bin/sh
 DEPS=/opt/actions-runner/_work/qgis-3.34.12-kylin/_qgis-334-deps
-export LD_LIBRARY_PATH="${DEPS}/lib/pyqt5-qt5:${DEPS}/lib64:${DEPS}/lib:/usr/lib64:/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${DEPS}/lib/pyqt5-qt5:${GCC_LIBDIR:+${GCC_LIBDIR}:}${DEPS}/lib64:${DEPS}/lib:/usr/lib64:/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec /usr/bin/python3 -c 'from PyQt5.pyrcc_main import main; main()' "$@"
 EOF
   chmod 755 "$DEPS_PREFIX/bin/pyrcc5"
