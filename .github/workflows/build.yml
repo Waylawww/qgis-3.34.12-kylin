@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: '执行阶段：diagnose / deps / qgis / all'
+        description: '执行阶段：diagnose / deps / qgis / install / all'
         type: choice
-        options: [diagnose, deps, qgis, all]
+        options: [diagnose, deps, qgis, install, all]
         default: diagnose
       build_jobs:
         description: '并行编译任务数'

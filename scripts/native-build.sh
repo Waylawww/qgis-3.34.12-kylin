@@ -75,6 +75,10 @@ case "$STAGE" in
     run "4 · RPM 静态校验" 40-verify-rpm.sh
     summarize
     ;;
+  install)
+    run "7 · 本机安装已构建 RPM（受限 sudo）" 70-install-rpm.sh
+    summarize
+    ;;
   all)
     run "0 · 原生门禁" 00-preflight.sh
     run "1 · 官方源码下载与校验" 05-fetch-qgis-source.sh
@@ -84,7 +88,7 @@ case "$STAGE" in
     summarize
     ;;
   *)
-    die "未知 STAGE=${STAGE}（可用: diagnose / deps / qgis / all）"
+    die "未知 STAGE=${STAGE}（可用: diagnose / deps / qgis / install / all）"
     ;;
 esac
 
