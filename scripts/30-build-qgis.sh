@@ -431,7 +431,8 @@ log "私有依赖库文件数: $(find "${DEPS_STAGE}" -type f -name '*.so*' | wc
 #  2) 依赖阶段用 -Wl,-rpath,$DEPS_PREFIX/lib{,64} 编译 Qt/GEOS/GDAL 等，这些库
 #     自身 RUNPATH 写死了构建机绝对路径（/opt/actions-runner/_work/...）。干净
 #     目标机上该路径不存在；构建机上则会误加载构建机原件而非 RPM 自带库。
-#     用 patchelf 把 STAGE 下所有 ELF 统一改成安装后的绝对前缀。
+#     runner 无 root 权限且未装 patchelf/chrpath，改用 patch-elf-rpath.py
+#     原地覆写 DT_RPATH/DT_RUNPATH 字符串为安装后的绝对前缀。
 if [[ -n "${GCC_LIBDIR}" ]]; then
   _libstdcpp="$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6" 2>/dev/null || true)"
   if [[ -n "${_libstdcpp}" && -f "${_libstdcpp}" ]] \
@@ -448,23 +449,12 @@ else
 fi
 
 FINAL_RPATH="${PREFIX_IN_RPM}/lib:${DEPS_IN_RPM}/lib:${DEPS_IN_RPM}/lib64"
-need_cmd patchelf "统一 ELF RPATH"
+need_cmd python3 "ELF RPATH 归一化"
 need_cmd readelf "ELF RPATH 门禁"
-: > "${LOG}/patchelf.log"
-_patched=0
-_patch_fail=0
-while IFS= read -r -d '' _f; do
-  readelf -h "${_f}" >/dev/null 2>&1 || continue
-  if patchelf --set-rpath "${FINAL_RPATH}" "${_f}" >>"${LOG}/patchelf.log" 2>&1; then
-    _patched=$((_patched+1))
-  else
-    warn "patchelf 失败: ${_f#"${STAGE}"}"
-    _patch_fail=$((_patch_fail+1))
-  fi
-done < <(find "${STAGE}${PREFIX_IN_RPM}" -type f \
-              \( -name '*.so' -o -name '*.so.*' -o -name 'qgis' -o -name 'qgis_*' \) -print0)
-log "patchelf: 成功 ${_patched} 个 ELF，失败 ${_patch_fail} 个（详见 logs/patchelf.log）"
-(( _patched > 0 )) || die "patchelf 未处理任何 ELF，RPATH 未统一"
+# self-hosted runner 无 root 权限，也没有 patchelf / chrpath；用纯标准库脚本
+# 原地覆写 DT_RPATH/DT_RUNPATH 字符串（新值不长于原值，ELF 偏移不变）。
+python3 "${REPO_ROOT}/scripts/patch-elf-rpath.py" \
+  "${STAGE}${PREFIX_IN_RPM}" "${FINAL_RPATH}" 2>&1 | tee "${LOG}/rpath-normalize.log"
 
 # 打包前门禁：STAGE 内不允许残留任何构建机绝对路径
 _leaks=0
