@@ -9,6 +9,11 @@
 #
 # 安装后以普通用户身份跑完整自测（CLI / PyQGIS / 离屏地图渲染），结果写入
 # ${REPORT_DIR}/install-selftest/，随 evidence artifact 上传，作为真机验收凭证。
+#
+# 2026-11-14：新增桌面 GUI(xcb) 验收。此前全部自测跑在 QT_QPA_PLATFORM=offscreen
+# 下，PASS 只证明无头可用，掩盖了真机 qgis 因缺 libqxcb.so 而 core dump。
+# 现在额外校验 xcb 插件/运行库随包、ldd 闭合，并在 Xvfb 提供的 X11 显示上
+# 真实创建 Qt 窗口截图（无 Xvfb 时降级为插件加载探测）。
 set -Eeuo pipefail
 
 RPM="${OUT_DIR}/rpms/qgis-${QGIS_VERSION}-1.ky10.x86_64.rpm"
@@ -68,6 +73,64 @@ check() {
   fi
 }
 
+# --- 桌面 GUI(xcb) 验收 -----------------------------------------------------
+XCB_PLUGIN="${DEPS}/plugins/platforms/libqxcb.so"
+xcb_files() {
+  test -f "${XCB_PLUGIN}" || return 1
+  find "${DEPS}/lib" -maxdepth 1 -name 'libQt5XcbQpa.so*' -print -quit | grep -q . || return 1
+  local l
+  for l in libxkbcommon.so libxkbcommon-x11.so libxcb-icccm.so libxcb.so libX11.so; do
+    find "${DEPS}/lib" -maxdepth 1 -name "${l}*" -print -quit | grep -q . || return 1
+  done
+}
+xcb_ldd_clean() {
+  local out
+  out="$(ldd "${XCB_PLUGIN}" 2>&1 || true)"
+  printf '%s\n' "${out}" > "${EVID}/xcb-plugin-ldd.txt"
+  ! grep -Eq 'not found' <<<"${out}"
+}
+
+XVFB_PID=""
+XDISPLAY=""
+GUI_MODE="plugin-probe"
+start_xvfb() {
+  command -v Xvfb >/dev/null 2>&1 || return 1
+  local n
+  for n in 99 100 101 102 103; do
+    Xvfb ":${n}" -screen 0 1024x768x24 -nolisten tcp >"${EVID}/xvfb.log" 2>&1 &
+    XVFB_PID=$!
+    sleep 3
+    if kill -0 "${XVFB_PID}" 2>/dev/null; then
+      XDISPLAY=":${n}"
+      return 0
+    fi
+    XVFB_PID=""
+  done
+  return 1
+}
+cleanup_xvfb() {
+  if [[ -n "${XVFB_PID}" ]]; then kill "${XVFB_PID}" 2>/dev/null || true; fi
+}
+trap cleanup_xvfb EXIT
+if start_xvfb; then
+  GUI_MODE="xvfb-real-window (${XDISPLAY})"
+else
+  echo "  Xvfb 不可用，GUI 验收降级为 xcb 插件加载探测"
+fi
+export QGIS_GUI_MODE="${GUI_MODE}"
+
+gui_xcb_smoke() {
+  local mode="probe"
+  if [[ -n "${XDISPLAY}" ]]; then mode="gui"; fi
+  DISPLAY="${XDISPLAY}" QT_QPA_PLATFORM=xcb \
+    python3 "${REPO_ROOT}/tests/gui_xcb_smoke.py" \
+      --mode "${mode}" \
+      --json "${EVID}/gui-xcb.json" \
+      --shot "${EVID}/gui-xcb.png" || return 1
+  python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1],encoding="utf-8"))["status"] == "PASS" else 1)' \
+    "${EVID}/gui-xcb.json"
+}
+
 rpm_installed()      { rpm -q qgis; }
 private_libstdcpp()  { test -e "${DEPS}/lib/libstdc++.so.6.0.29"; }
 ldd_clean() {
@@ -110,6 +173,10 @@ check qgis_process_version   qgis_process_version
 check qgis_version           qgis_version
 check pyqgis_version         pyqgis_version
 check pyqgis_smoke           pyqgis_smoke
+echo "== 桌面 GUI(xcb) 验收（模式: ${GUI_MODE}） =="
+check xcb_files              xcb_files
+check xcb_ldd_clean          xcb_ldd_clean
+check gui_xcb_smoke          gui_xcb_smoke
 
 # --- 汇总报告 ---------------------------------------------------------------
 if ! python3 - "${EVID}" "${QGIS_VERSION}" "${CHECKS[@]}" <<'PY'
@@ -129,9 +196,15 @@ if os.path.exists(smoke_path):
 
 mandatory = ("rpm_installed", "private_libstdcpp", "ldd_clean",
              "qgis_process_version", "qgis_version", "pyqgis_version",
-             "pyqgis_smoke", "map_render")
+             "pyqgis_smoke", "map_render", "xcb_files", "xcb_ldd_clean",
+             "gui_xcb_smoke")
 failed = [k for k in mandatory if checks.get(k) != "PASS"]
 render_png = os.path.join(evid, "render.png")
+gui_path = os.path.join(evid, "gui-xcb.json")
+gui_png = os.path.join(evid, "gui-xcb.png")
+gui = {}
+if os.path.exists(gui_path):
+    gui = json.load(open(gui_path, encoding="utf-8"))
 report = {
     "stage": "STAGE_D_TARGET_HOST_INSTALL_AND_SELFTEST",
     "environment": "self-hosted runner host, Kylin V10 (Halberd) / x86_64 / Hygon C86",
@@ -142,6 +215,9 @@ report = {
     "render_png_bytes": os.path.getsize(render_png) if os.path.exists(render_png) else 0,
     "render_detail": smoke.get("render"),
     "smoke_checks": smoke.get("checks"),
+    "gui": {"mode": os.environ.get("QGIS_GUI_MODE", "unknown"),
+            "detail": gui,
+            "screenshot_bytes": os.path.getsize(gui_png) if os.path.exists(gui_png) else 0},
     "failed_checks": failed,
     "verdict": "PASS" if not failed else "FAIL",
 }

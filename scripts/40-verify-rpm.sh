@@ -57,6 +57,19 @@ grep -aq 'GLIBCXX_3\.4\.29' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 GLIBCXX
 grep -aq 'CXXABI_1\.3\.13' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 CXXABI_1.3.13: ${STDCPP}"
 log "  GCC11 libstdc++ 已随包: ${STDCPP#"${ROOT}"}"
 
+# 桌面 GUI 硬需求：Qt xcb QPA 平台插件 + XcbQpa 运行库 + X11/xkbcommon。
+# 2026-11-14 真机启动失败的根因就是 RPM 里只有 minimal/offscreen/vnc/webgl。
+# 这里做静态门禁，运行期的真实 X11 窗口验收由 70-install-rpm.sh 完成。
+XCB_PLUGIN="$(find "${ROOT}" -path '*/plugins/platforms/libqxcb.so' -print -quit)"
+[[ -n "${XCB_PLUGIN}" ]] || die "RPM 中缺少 libqxcb.so（Qt xcb 平台插件）：真机桌面 GUI 无法启动"
+XCB_QPA="$(find "${ROOT}" -name 'libQt5XcbQpa.so*' -print -quit)"
+[[ -n "${XCB_QPA}" ]] || die "RPM 中缺少 libQt5XcbQpa.so*：xcb 平台插件无法加载"
+for _xcb_lib in libxkbcommon.so libxkbcommon-x11.so libxcb-icccm.so libxcb.so libX11.so; do
+  [[ -n "$(find "${ROOT}" -name "${_xcb_lib}*" -print -quit)" ]] \
+    || die "RPM 中缺少 ${_xcb_lib}*：xcb 平台插件运行库未闭合"
+done
+log "  xcb 平台插件已随包: ${XCB_PLUGIN#"${ROOT}"}"
+
 # 严禁把 Debian/Ubuntu 体系的东西塞进 RPM。
 # 注意：x86_64-linux-gnu 是 Python C 扩展的标准 arch 后缀
 # （如 PyQt5/sip.cpython-37m-x86_64-linux-gnu.so），所有 Linux 发行版（含
@@ -100,7 +113,8 @@ while IFS= read -r -d '' f; do
     warn "ldd 符号版本不匹配: ${f#"${ROOT}"}"
     missing=$((missing+1))
   fi
-done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' \) -print0)
+done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' \
+              -o -path '*/plugins/platforms/*.so' -o -name 'libQt5XcbQpa.so*' \) -print0)
 [[ "${missing}" -eq 0 ]] || die "${missing} 个 ELF 存在 'not found' 依赖或符号版本不匹配（检查 RPM 是否自带 GCC11 libstdc++、私有依赖是否齐全）"
 
 # --- 5. ISA / ABI ------------------------------------------------------------
@@ -118,7 +132,7 @@ out = {
     "checks": {
         "version_lock": "PASS", "arch_x86_64": "PASS", "3d_library": "PASS",
         "pyqgis": "PASS", "desktop_binary": "PASS", "ldd": "PASS",
-        "gcc11_libstdcxx": "PASS",
+        "gcc11_libstdcxx": "PASS", "xcb_platform_plugin": "PASS",
         "isa_glibc": json.load(open(os.path.join(rep, "isa-report.json"), encoding="utf-8"))["verdict"],
     },
     "verdict": "PASS",

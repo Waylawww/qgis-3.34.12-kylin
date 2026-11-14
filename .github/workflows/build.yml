@@ -23,6 +23,10 @@ on:
         description: '忽略依赖缓存，强制重建依赖'
         type: boolean
         default: false
+      force_rebuild_qt:
+        description: '强制重编 Qt（启用 xcb 桌面 GUI 平台插件）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +40,7 @@ env:
   STAGE: ${{ github.event.inputs.stage || 'diagnose' }}
   QGIS_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '6' }}
   FORCE_REBUILD_DEPS: ${{ github.event.inputs.force_rebuild_deps || 'false' }}
+  FORCE_REBUILD_QT: ${{ github.event.inputs.force_rebuild_qt || 'false' }}
   # 注意：runner 上下文在 workflow 顶层 env 中不可用（会直接导致
   # Invalid workflow file / 0 jobs）。持久目录改由首步骤基于
   # GITHUB_WORKSPACE 的父目录计算后写入 GITHUB_ENV。

@@ -422,6 +422,23 @@ for d in proj gdal sip PyQt5 Qsci; do
 done
 log "私有依赖库文件数: $(find "${DEPS_STAGE}" -type f -name '*.so*' | wc -l)"
 
+# --- 桌面 GUI(xcb) 打包门禁 -------------------------------------------------
+# 2026-11-14 真机反馈：无 libqxcb.so 时 qgis 桌面启动直接
+# "Could not find the Qt platform plugin xcb" 并 core dump；offscreen 自测
+# 全 PASS 也掩盖不了这个问题。20-build-deps.sh 已把 xcb/X11/xkbcommon
+# 运行库放进 $DEPS_PREFIX/lib，上面的通用复制会带进 RPM；这里逐一核实，
+# 缺任何一件都拒绝打包，避免再次发出只能无头运行的 RPM。
+XCB_PLUGIN="${DEPS_STAGE}/plugins/platforms/libqxcb.so"
+[[ -f "${XCB_PLUGIN}" ]] || die "私有依赖里没有 libqxcb.so：Qt 未启用 xcb QPA，真机桌面 GUI 会启动失败（请先跑 stage=deps 重编 Qt）"
+XCB_QPA="$(find "${DEPS_STAGE}/lib" -maxdepth 1 -name 'libQt5XcbQpa.so*' -print -quit)"
+[[ -n "${XCB_QPA}" ]] || die "私有依赖里没有 libQt5XcbQpa.so*：xcb 平台插件无法加载"
+for _xcb_lib in libxkbcommon.so libxkbcommon-x11.so libxcb-icccm.so libxcb.so libX11.so; do
+  if ! find "${DEPS_STAGE}/lib" -maxdepth 1 -name "${_xcb_lib}*" -print -quit | grep -q .; then
+    die "私有依赖缺 ${_xcb_lib}*：xcb 平台插件运行库未闭合"
+  fi
+done
+log "xcb QPA 闭合: $(basename "${XCB_PLUGIN}") + $(basename "${XCB_QPA}") + X11/xkbcommon 运行库齐备"
+
 # --- 私有运行库自包含 + 统一 ELF RPATH --------------------------------------
 # 2026-11-14 真机部署反馈修复：
 #  1) 所有 C++ 代码由 GCC 11 编译，需要 libstdc++.so.6 提供 GLIBCXX_3.4.29 /

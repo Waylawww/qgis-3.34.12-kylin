@@ -17,6 +17,19 @@
 #   7. SIP/PyQt5 走 SIP6 + PyQt-builder + sip-install（SIP4 解析不了
 #      PyQt5 5.15.6 的 .sip 语法）；qwt 的 make install 会写 /usr/local，
 #      改为直接复制编译产物到私有前缀。
+#
+# 2026-11-14 修订（真机 GUI 启动失败：no Qt platform plugin "xcb"）：
+#   8. Qt 5.15.2 的 xcb QPA 条件为
+#        features.thread && libs.xcb && tests.xcb_syslibs && features.xkbcommon-x11
+#      configure 实测只有 "XCB ICCCM >= 0.3.9" 与 "xkbcommon >= 0.5.0" 为 no
+#      ——这两项的 .pc/头文件/库都在 $SYSROOT 里，但 Qt 的编译测试完全不读
+#      CPPFLAGS/LDFLAGS，pkg-config 返回的仍是 /usr/include /usr/lib64，
+#      于是连 #include <xkbcommon/xkbcommon.h> 都找不到，xcb 被静默禁用。
+#      修复：把 xcb/xkbcommon/X11 头文件与库复制进私有前缀，用编译器自带的
+#      CPATH / LIBRARY_PATH 注入到 configure 的每个编译测试（不依赖 configure
+#      是否接受 -I/-L），并显式 -xcb 让缺依赖直接 ERROR 而不是静默降级。
+#   9. 产物门禁：qt.ok 存在但没有 libqxcb.so 时，自动清 qt 及下游 stamp 重编；
+#      同时把 xcb 运行库放进 $DEPS_PREFIX/lib，由 30-build-qgis.sh 带进 RPM。
 set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
@@ -109,13 +122,70 @@ fixup_sysroot_libs() {
   log "D0: sysroot 删除有动态替代的 .a $deleted 个，修复断链 .so $fixed 个"
 }
 
+# Qt xcb QPA 平台插件（libqxcb.so）在 configure 阶段需要 sysroot 里的
+# xcb / xkbcommon / X11 头文件与链接名，在运行期还需要对应的 .so.N。它们
+# 全部只存在于 $SYSROOT，既不在系统默认搜索路径，也不会被打包。这里把
+# configure 需要的头文件与链接名复制到私有前缀，并把运行库放进 lib/，
+# 让 30-build-qgis.sh 的通用复制循环原样带进 RPM。
+# 注意 fixup_sysroot_libs() 会把断链 .so 改成指向 sysroot 的绝对软链，
+# 直接 cp -a 进 RPM 就会指向构建机路径；因此这里统一改成相对链接名。
+install_xcb_runtime() {
+  local sysinc="$SYSROOT/usr/include" syslib="$SYSROOT/usr/lib64"
+  local dstinc="$DEPS_PREFIX/include" dstlib="$DEPS_PREFIX/lib"
+  local d f base tgt _real copied=0 linked=0 dirs=0
+  mkdir -p "$dstinc" "$dstlib"
+  for d in xcb xkbcommon X11; do
+    if [[ -d "$sysinc/$d" ]]; then
+      mkdir -p "$dstinc/$d"
+      cp -a "$sysinc/$d"/. "$dstinc/$d/" 2>/dev/null || true
+      dirs=$((dirs + 1))
+    fi
+  done
+  shopt -s nullglob
+  for f in "$sysinc"/xcb*.h; do
+    if [[ -f "$f" ]]; then cp -a "$f" "$dstinc/" 2>/dev/null || true; fi
+  done
+  for f in "$syslib"/libxcb*.so* "$syslib"/libxkbcommon*.so* \
+           "$syslib"/libX11*.so* "$syslib"/libXext*.so* \
+           "$syslib"/libXi.so* "$syslib"/libXrender.so* \
+           "$syslib"/libSM.so* "$syslib"/libICE.so*; do
+    base="$(basename "$f")"
+    if [[ -L "$f" ]]; then
+      # fixup_sysroot_libs() 可能把链接指向 sysroot 外的系统库，因此按
+      # readlink -f 的真实文件复制，而不是假定目标就在 $syslib 里。
+      _real="$(readlink -f "$f" 2>/dev/null || true)"
+      tgt="$(basename "$_real")"
+      if [[ -n "$_real" && -n "$tgt" && -e "$_real" ]]; then
+        [[ -e "$dstlib/$tgt" ]] || cp -a "$_real" "$dstlib/$tgt" 2>/dev/null || true
+        ln -sfn "$tgt" "$dstlib/$base"
+        linked=$((linked + 1))
+      fi
+    else
+      cp -a "$f" "$dstlib/$base" 2>/dev/null || true
+      copied=$((copied + 1))
+    fi
+  done
+  shopt -u nullglob
+  log "D0: xcb/X11/xkbcommon 私有化：头文件目录 $dirs 个，库复制 $copied / 相对软链 $linked"
+}
+
+# 提前盘点 xcb 必需的 .pc / 头文件 / 库。Qt configure 失败要等到 2~4 小时
+# 编译结束才看得见，缺件时在这里立刻 die，并留下可诊断的 JSON 清单。
+# 关键件（xkbcommon / xkbcommon-x11 / xcb-icccm）缺失直接判 FAIL；其余扩展
+# 只记录，Qt configure 自己会在 feature precondition 里给出确切原因。
+check_xcb_sysroot() {
+  python3 "${REPO_ROOT}/scripts/check-xcb-sysroot.py" \
+    "$SYSROOT" "$REPORT_DIR" \
+    || die "xcb sysroot 关键件缺失（见 ${REPORT_DIR}/xcb-sysroot.json），Qt 不可能编出 libqxcb.so"
+}
+
 setup_flags() {
   # $PY_SITE/bin 是 pip --target 生成 sip-* console scripts 的位置；
   # pyqtbuild 的 distinfo 目标会按 PATH 查找 sip-distinfo，必须同时可见。
   export PATH="$DEPS_PREFIX/bin:$PY_SITE/bin:$PATH"
   export PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}"
   export LD_LIBRARY_PATH="${GCC_LIBDIR:+${GCC_LIBDIR}:}$DEPS_PREFIX/lib:$DEPS_PREFIX/lib64:${SYSROOT}/usr/lib64:${LD_LIBRARY_PATH:-}"
-  export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:$DEPS_PREFIX/lib64/pkgconfig:${SYSROOT}/usr/lib64/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+  export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:$DEPS_PREFIX/lib64/pkgconfig:${SYSROOT}/usr/lib64/pkgconfig:${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
   export CMAKE_PREFIX_PATH="$DEPS_PREFIX;${SYSROOT}/usr"
   export CPPFLAGS="-I$DEPS_PREFIX/include -I${SYSROOT}/usr/include ${CPPFLAGS:-}"
   export LDFLAGS="${GCC_LIBDIR:+-L$GCC_LIBDIR -Wl,-rpath,$GCC_LIBDIR }-L$DEPS_PREFIX/lib -L$DEPS_PREFIX/lib64 -L${SYSROOT}/usr/lib64 -Wl,-rpath,$DEPS_PREFIX/lib -Wl,-rpath,$DEPS_PREFIX/lib64 -Wl,-rpath,${SYSROOT}/usr/lib64 ${LDFLAGS:-}"
@@ -329,6 +399,25 @@ else
 fi
 printf '%s\n' "${GCC_LIBDIR:-NOT_FOUND}" > "$REPORT_DIR/gcc-runtime.txt"
 setup_flags
+install_xcb_runtime
+check_xcb_sysroot
+
+# --- Qt xcb 平台插件强制重编 ------------------------------------------------
+# 旧产物是「无 xcb 的 Qt」：qt.ok 存在但 plugins/platforms/libqxcb.so 不存在，
+# run_dep 会 CACHED 跳过，真机 GUI 永远起不来。这里按真实产物判断，自动清
+# qt 及所有依赖 Qt 的下游 stamp（qmake / Qt 库 / PyQt5 绑定都要跟着重编）。
+QT_DOWNSTREAM_STAMPS=(qt qwt qscintilla qca qtkeychain pyqt5 qsci_py)
+_xcb_present="no"
+if [[ -f "$DEPS_PREFIX/plugins/platforms/libqxcb.so" ]]; then _xcb_present="yes"; fi
+if [[ "${FORCE_REBUILD_QT:-false}" == "true" ]] || \
+   { [[ -f "$STAMPS/qt.ok" ]] && [[ "$_xcb_present" == "no" ]]; }; then
+  log "D0: 需要重编 Qt（FORCE_REBUILD_QT=${FORCE_REBUILD_QT:-false}，xcb 插件存在=$_xcb_present），清除 qt 及下游 stamp"
+  for s in "${QT_DOWNSTREAM_STAMPS[@]}"; do rm -f "$STAMPS/$s.ok"; done
+  # 只清可能残留的半吊子 xcb 产物；minimal/offscreen/vnc/webgl 是旧 Qt
+  # 已装的可用插件，不能删（重编万一没覆盖反而会破坏无头自测）。
+  rm -f "$DEPS_PREFIX"/lib/libQt5XcbQpa.so* \
+        "$DEPS_PREFIX"/plugins/platforms/libqxcb.so
+fi
 
 # --- SIP 版本门禁 -----------------------------------------------------------
 # run_dep 只看 $STAMPS/sip.ok 就会 CACHED 跳过。SIP4 -> SIP6 的切换、
@@ -434,6 +523,16 @@ dep_qt() {
   fi
   local b="$BUILD/qt"
   rm -rf "$b"; mkdir -p "$b"; cd "$b"
+  # Qt configure 的编译测试完全不读 CPPFLAGS/LDFLAGS：pkg-config 返回的是
+  # /usr/include /usr/lib64，而 xkbcommon / xcb-icccm 的头文件与库只在
+  # sysroot 里，于是 "Checking for xkbcommon >= 0.5.0... no"、xcb 被禁用。
+  # CPATH / LIBRARY_PATH 由编译器自身读取，会进入 configure 生成的每一个
+  # try-compile，且不依赖 configure 是否接受 -I/-L 前缀参数。只指向已把
+  # xcb/X11/xkbcommon 头文件与库私有化的 $DEPS_PREFIX，不引入系统头冲突。
+  export CPATH="$DEPS_PREFIX/include${CPATH:+:$CPATH}"
+  export LIBRARY_PATH="$DEPS_PREFIX/lib:$DEPS_PREFIX/lib64${LIBRARY_PATH:+:$LIBRARY_PATH}"
+  log "  Qt configure 注入 CPATH=$CPATH"
+  log "  Qt configure 注入 LIBRARY_PATH=$LIBRARY_PATH"
   # Qt 5.15.2 configure.json 实测：xcb 是 boolean（只有 -xcb / -no-xcb），
   # 不存在 -qt-xcb（上一轮报 "Invalid value given for boolean command line
   # option 'xcb'"）。-no-gtk / -no-glib / -no-cups / -no-pulseaudio / -no-alsa
@@ -451,14 +550,41 @@ dep_qt() {
     -qt-pcre -qt-doubleconversion -qt-harfbuzz \
     -qt-libpng -qt-libjpeg -qt-zlib \
     -system-freetype -fontconfig -openssl -no-icu \
+    -xcb \
     -no-eglfs -no-directfb -no-linuxfb -no-kms \
     -no-compile-examples; then
     warn "  Qt configure 失败，config.log 尾部:"
     tail -n 80 "$b/config.log" 2>/dev/null || true
     return 1
   fi
+  # -xcb 是显式 enable：若 xkbcommon / xcb-icccm 等 precondition 仍不满足，
+  # configure 会直接 ERROR 而不是静默降级成「无 QPA 平台插件的 Qt」。
+  # 把 QPA 段留档，便于确认 xcb 真的被启用。
+  if [[ -f "$b/config.summary" ]]; then
+    cp -f "$b/config.summary" "${REPORT_DIR}/qt-config.summary.txt"
+    sed -n '/^QPA backends:/,/^Qt Sql:/p' "$b/config.summary" \
+      | tee "${LOG}/qt-qpa-backends.log"
+  fi
   make -j"$JOBS" || return 1
   make install || return 1
+  # 产物门禁：configure 说 yes 不算数，必须真的编出 xcb 平台插件与 XcbQpa 库，
+  # 且其运行库全部可解析。真机桌面 GUI 完全依赖这两个文件。
+  local xcb_plugin="$DEPS_PREFIX/plugins/platforms/libqxcb.so" xcb_ldd
+  if [[ ! -f "$xcb_plugin" ]]; then
+    warn "  Qt 编完仍没有 libqxcb.so（xcb QPA 未启用），拒绝记为 OK"
+    return 1
+  fi
+  if ! installed_lib libQt5XcbQpa.so; then
+    warn "  Qt 缺 libQt5XcbQpa.so*（xcb 平台插件的运行库）"
+    return 1
+  fi
+  xcb_ldd="$(ldd "$xcb_plugin" 2>&1 || true)"
+  printf '%s\n' "$xcb_ldd" > "${LOG}/qt-xcb-plugin-ldd.txt"
+  if grep -Eq '=>[[:space:]]+not found' <<<"$xcb_ldd"; then
+    warn "  libqxcb.so 有未解析的运行库: $(grep -E '=>[[:space:]]+not found' <<<"$xcb_ldd" | tr '\n' ' ')"
+    return 1
+  fi
+  log "  Qt xcb QPA 平台插件就绪: $xcb_plugin"
   [[ -x "$DEPS_PREFIX/bin/qmake" ]] && [[ -d "$DEPS_PREFIX/lib/cmake/Qt53DCore" ]]
 }
 
@@ -772,7 +898,7 @@ done
 python3 - "$REPORT_DIR" "$DEPS_PREFIX" "$STATUS_FILE" \
   "${GCC_LIBDIR:-NOT_FOUND}" "$PY_SITE" \
   "${FAILURES[@]+"${FAILURES[@]}"}" <<'PY'
-import datetime, json, os, sys
+import datetime, glob, json, os, sys
 rep, prefix, status_file, gcc_lib, py_site = sys.argv[1:6]
 fails = sys.argv[6:]
 status = {}
@@ -780,12 +906,19 @@ for line in open(status_file, encoding='utf-8'):
     parts = line.strip().split('\t')
     if len(parts) == 2:
         status[parts[0]] = parts[1]
+xcb_plugin = os.path.join(prefix, 'plugins', 'platforms', 'libqxcb.so')
+xcb_qpa = any(glob.glob(os.path.join(prefix, 'lib', 'libQt5XcbQpa.so*')))
+xcb_ok = os.path.isfile(xcb_plugin) and xcb_qpa
+if not xcb_ok and not fails:
+    fails = ['qt_xcb_platform_plugin']
 data = {
     'generated_at': datetime.datetime.utcnow().isoformat() + 'Z',
     'deps_prefix': prefix,
     'gcc_runtime_libdir': gcc_lib,
     'python_site': py_site,
     'status': status,
+    'xcb_platform_plugin': os.path.isfile(xcb_plugin),
+    'xcb_qpa_library': bool(xcb_qpa),
     'failures': fails,
     'verdict': 'PASS' if not fails else 'FAIL',
 }
@@ -796,5 +929,8 @@ PY
 
 if (( ${#FAILURES[@]} > 0 )); then
   die "依赖构建失败: ${FAILURES[*]}（完整日志见 dep-*.log）"
+fi
+if [[ ! -f "$DEPS_PREFIX/plugins/platforms/libqxcb.so" ]]; then
+  die "依赖构建完成但缺 xcb 平台插件（真机桌面 GUI 不可用），见 deps-manifest.json / dep-qt.log"
 fi
 info "BUILD DEPS PASS —— 全部依赖已安装到 $DEPS_PREFIX"
