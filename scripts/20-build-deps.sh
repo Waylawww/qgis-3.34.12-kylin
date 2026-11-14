@@ -354,7 +354,7 @@ fi
 # 因此必须让 dep_pyqt5 重跑（走快速路径，只补工具、不重编 35 个绑定）。
 if [[ -f "$STAMPS/pyqt5.ok" ]] && \
    { [[ ! -x "$DEPS_PREFIX/bin/pyrcc5" ]] || \
-     [[ ! -f "$DEPS_PREFIX/lib/pyqt5-qt5/libQt5Core.so.5" ]]; }; then
+     [[ ! -f "$DEPS_PREFIX/lib/pyqt5-qt5/lib/libQt5Core.so.5" ]]; }; then
   log "D0: PyQt5 pyrcc5 / Qt5 runtime 缺失，清理 stamp 后重建"
   rm -f "$STAMPS/pyqt5.ok"
 fi
@@ -643,7 +643,7 @@ PY
   cat > "$DEPS_PREFIX/bin/pyrcc5" <<'EOF'
 #!/bin/sh
 DEPS=/opt/actions-runner/_work/qgis-3.34.12-kylin/_qgis-334-deps
-export LD_LIBRARY_PATH="/usr/local/gcc11/lib64:${DEPS}/lib/pyqt5-qt5:${DEPS}/lib64:${DEPS}/lib:/usr/lib64:/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="/usr/local/gcc11/lib64:${DEPS}/lib/pyqt5-qt5/lib:${DEPS}/lib64:${DEPS}/lib:/usr/lib64:/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec /usr/bin/python3 -c 'from PyQt5.pyrcc_main import main; main()' "$@"
 EOF
   chmod 755 "$DEPS_PREFIX/bin/pyrcc5"
