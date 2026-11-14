@@ -624,10 +624,21 @@ import os, sys, zipfile
 
 whl, dest = sys.argv[1], sys.argv[2]
 os.makedirs(dest, exist_ok=True)
+prefix = 'PyQt5/Qt5/'
 with zipfile.ZipFile(whl) as z:
     for n in z.namelist():
-        if n.startswith('PyQt5/Qt5/') and not n.endswith('/'):
-            z.extract(n, dest)
+        if not n.startswith(prefix) or n.endswith('/'):
+            continue
+        rel = n[len(prefix):]
+        if rel.startswith('lib/'):
+            out = os.path.join(dest, 'lib', rel[len('lib/'):])
+        elif rel.startswith('plugins/'):
+            out = os.path.join(dest, 'plugins', rel[len('plugins/'):])
+        else:
+            out = os.path.join(dest, rel)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, 'wb') as f:
+            f.write(z.read(n))
 PY
   cat > "$DEPS_PREFIX/bin/pyrcc5" <<'EOF'
 #!/bin/sh
