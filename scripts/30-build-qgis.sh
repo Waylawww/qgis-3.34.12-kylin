@@ -184,13 +184,22 @@ else
   warn "sysroot 的 protobuf 头文件/库/protoc 不全（${SYSROOT}），不传 Protobuf_* 提示，交给 CMake 探测"
 fi
 
+# 不再显式传 -DEXPAT_*（实测显式指向 sysroot 的链接名反而让 FPHSA 判缺失）；
+# 改为把 expat 复制进 DEPS_PREFIX（其 lib 一定会被 find_library 搜索），
+# 让 FindEXPAT 经 CMAKE_PREFIX_PATH 自动探测，最稳。
 EXPAT_HINTS=()
-if [[ -f "$_expat_inc/expat.h" && -e "$_expat_lib" ]]; then
-  EXPAT_HINTS=(-DEXPAT_INCLUDE_DIR:PATH="$_expat_inc" -DEXPAT_LIBRARY:FILEPATH="$_expat_lib")
-else
-  warn "expat 头文件或库缺失（inc=$_expat_inc lib=$_expat_lib），不传 EXPAT_* 提示"
-fi
 log "前置修正完成，开始 CMake 配置（完整日志: ${LOG}/qgis-cmake.log）"
+
+# --- EXPAT 诊断（打到 stdout，便于在 job 日志里直接看）---
+echo "== EXPAT DIAG =="
+echo "DEPS_PREFIX=$DEPS_PREFIX"
+echo "_expat_inc=$_expat_inc"
+echo "_expat_lib=$_expat_lib"
+echo "hints=${#EXPAT_HINTS[@]}"
+ls -l "$_expat_inc/expat.h" 2>&1 || echo "  (expat.h 缺失: $_expat_inc)"
+ls -l "$_expat_lib" 2>&1 || echo "  (libexpat.so 缺失: $_expat_lib)"
+ls -l "$DEPS_PREFIX/lib/libexpat.so"* 2>&1 || echo "  (DEPS_PREFIX/lib 无 libexpat.so*)"
+echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
 
 CMAKE_ARGS=(
   -DCMAKE_BUILD_TYPE:STRING=Release
