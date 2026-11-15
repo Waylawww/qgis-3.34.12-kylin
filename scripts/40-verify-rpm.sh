@@ -48,8 +48,34 @@ test -x "${ROOT}/usr/bin/qgis" || die "RPM 中缺少 /usr/bin/qgis（Desktop）"
 test -x "${ROOT}/usr/bin/qgis_process" || die "RPM 中缺少 /usr/bin/qgis_process"
 test -n "$(find "${ROOT}" -name 'libqgis_analysis.so.*' -print -quit)" || die "缺少 qgis analysis 库"
 
-# 严禁把 Debian/Ubuntu 体系的东西塞进 RPM
-if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path '*x86_64-linux-gnu*' \) -print -quit | grep -q .; then
+# RPM 必须自带 GCC11 libstdc++（GLIBCXX_3.4.29 / CXXABI_1.3.13）。
+# 麒麟 V10 系统 /usr/lib64/libstdc++.so.6 来自 gcc-7.3.0，最高约
+# GLIBCXX_3.4.25；缺这份私有运行库时 qgis 在目标机上直接启动失败。
+STDCPP="$(find "${ROOT}" -type f -name 'libstdc++.so.6*' -print -quit)"
+[[ -n "${STDCPP}" ]] || die "RPM 未自带 libstdc++.so.6：目标机 gcc-7.3 运行库不满足 GLIBCXX_3.4.29"
+grep -aq 'GLIBCXX_3\.4\.29' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 GLIBCXX_3.4.29: ${STDCPP}"
+grep -aq 'CXXABI_1\.3\.13' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 CXXABI_1.3.13: ${STDCPP}"
+log "  GCC11 libstdc++ 已随包: ${STDCPP#"${ROOT}"}"
+
+# 桌面 GUI 硬需求：Qt xcb QPA 平台插件 + XcbQpa 运行库 + X11/xkbcommon。
+# 2026-11-14 真机启动失败的根因就是 RPM 里只有 minimal/offscreen/vnc/webgl。
+# 这里做静态门禁，运行期的真实 X11 窗口验收由 70-install-rpm.sh 完成。
+XCB_PLUGIN="$(find "${ROOT}" -path '*/plugins/platforms/libqxcb.so' -print -quit)"
+[[ -n "${XCB_PLUGIN}" ]] || die "RPM 中缺少 libqxcb.so（Qt xcb 平台插件）：真机桌面 GUI 无法启动"
+XCB_QPA="$(find "${ROOT}" -name 'libQt5XcbQpa.so*' -print -quit)"
+[[ -n "${XCB_QPA}" ]] || die "RPM 中缺少 libQt5XcbQpa.so*：xcb 平台插件无法加载"
+for _xcb_lib in libxkbcommon.so libxkbcommon-x11.so libxcb-icccm.so libxcb.so libX11.so; do
+  [[ -n "$(find "${ROOT}" -name "${_xcb_lib}*" -print -quit)" ]] \
+    || die "RPM 中缺少 ${_xcb_lib}*：xcb 平台插件运行库未闭合"
+done
+log "  xcb 平台插件已随包: ${XCB_PLUGIN#"${ROOT}"}"
+
+# 严禁把 Debian/Ubuntu 体系的东西塞进 RPM。
+# 注意：x86_64-linux-gnu 是 Python C 扩展的标准 arch 后缀
+# （如 PyQt5/sip.cpython-37m-x86_64-linux-gnu.so），所有 Linux 发行版（含
+# 麒麟/RHEL）都这样命名，并非 Debian 专属；因此只匹配真正的 Debian 库目录
+# （路径中间的 */x86_64-linux-gnu/*），避免误伤合法的 .so 文件名后缀。
+if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path '*/x86_64-linux-gnu/*' \) -print -quit | grep -q .; then
   die "检测到 Debian/Ubuntu 体系文件：本工程要求麒麟原生 RPM 依赖体系"
 fi
 if grep -RIl 'ubuntu\|debian' "${REPORT_DIR}/rpm/"*.requires.txt 2>/dev/null | grep -q .; then
@@ -57,18 +83,39 @@ if grep -RIl 'ubuntu\|debian' "${REPORT_DIR}/rpm/"*.requires.txt 2>/dev/null | g
 fi
 
 # --- 4. 动态链接 -------------------------------------------------------------
+# 本 RPM 自带私有依赖（Qt/PROJ/GEOS/GDAL），不在系统 ldconfig 路径里，
+# 解包校验必须显式注入解包根内的私有库目录，否则 ldd 会把它们全部误报成
+# "not found"。运行时由 /usr/bin/qgis wrapper 做同样的注入。
+export LD_LIBRARY_PATH="${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib:${ROOT}/opt/qgis-${QGIS_VERSION}/deps/lib64:${ROOT}/opt/qgis-${QGIS_VERSION}/lib:${LD_LIBRARY_PATH:-}"
+# QGIS 二进制链接时写死绝对 RPATH（/opt/qgis-3.34.12/lib 等）指向自带私有依赖，
+# 而 RPATH 优先级高于 LD_LIBRARY_PATH。解包校验时真实前缀不存在，ld 仍会优先
+# 走绝对 RPATH 而把私有库误报成 not found。临时把真实前缀软链到解包根，让绝对
+# RPATH 在校验环境下也能解析（构建目录下该前缀持久，软链可跨次复用；已存在则跳过）。
+if [[ -d "${ROOT}/opt/qgis-${QGIS_VERSION}" ]] && [[ ! -e "/opt/qgis-${QGIS_VERSION}" ]]; then
+  ln -sfn "${ROOT}/opt/qgis-${QGIS_VERSION}" "/opt/qgis-${QGIS_VERSION}" 2>/dev/null || true
+fi
 LDD_LOG="${REPORT_DIR}/rpm/ldd.txt"
 : > "${LDD_LOG}"
 missing=0
 while IFS= read -r -d '' f; do
   echo "### ${f#"${ROOT}"}" >> "${LDD_LOG}"
   ldd -r "$f" >> "${LDD_LOG}" 2>&1 || true
-  if grep -q 'not found' <<<"$(ldd "$f" 2>&1 || true)"; then
-    warn "ldd 有未解析库: ${f#"${ROOT}"}"
+  out="$(ldd "$f" 2>&1 || true)"
+  # 真正的库文件缺失：形如 "libxxx.so => not found"（打包缺陷，必须失败）
+  if grep -Eq '=>[[:space:]]+not found' <<<"$out"; then
+    warn "ldd 有缺失的库文件: ${f#"${ROOT}"}"
     missing=$((missing+1))
   fi
-done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' \) -print0)
-[[ "${missing}" -eq 0 ]] || die "${missing} 个 ELF 存在 'not found' 依赖；请用 dnf repoquery 补齐原生 RPM 依赖"
+  # 符号版本不匹配（GLIBCXX_3.4.29 / CXXABI_1.3.13 等）：真机上表现就是
+  # qgis 启动直接失败。修复由 30-build-qgis.sh 随包提供 GCC11 libstdc++ 完成，
+  # 绝不能降级为 WARN —— 此前降级导致缺陷 RPM 被判 verdict=PASS 并发布。
+  if grep -Eq "version \`(GLIBC|GLIBCXX|CXXABI)[^']*' not found" <<<"$out"; then
+    warn "ldd 符号版本不匹配: ${f#"${ROOT}"}"
+    missing=$((missing+1))
+  fi
+done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' \
+              -o -path '*/plugins/platforms/*.so' -o -name 'libQt5XcbQpa.so*' \) -print0)
+[[ "${missing}" -eq 0 ]] || die "${missing} 个 ELF 存在 'not found' 依赖或符号版本不匹配（检查 RPM 是否自带 GCC11 libstdc++、私有依赖是否齐全）"
 
 # --- 5. ISA / ABI ------------------------------------------------------------
 bash "${REPO_ROOT}/scripts/check-isa.sh" "${ROOT}"
@@ -85,6 +132,7 @@ out = {
     "checks": {
         "version_lock": "PASS", "arch_x86_64": "PASS", "3d_library": "PASS",
         "pyqgis": "PASS", "desktop_binary": "PASS", "ldd": "PASS",
+        "gcc11_libstdcxx": "PASS", "xcb_platform_plugin": "PASS",
         "isa_glibc": json.load(open(os.path.join(rep, "isa-report.json"), encoding="utf-8"))["verdict"],
     },
     "verdict": "PASS",

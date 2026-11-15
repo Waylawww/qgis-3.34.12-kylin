@@ -43,7 +43,9 @@ def main() -> int:
 
         checks["import_qgis_core"] = "PASS"
         version = Qgis.QGIS_VERSION
-        checks["qgis_version"] = "PASS" if version == EXPECTED_VERSION else \
+        # 3.34 的 Qgis.QGIS_VERSION 带发行代号（如 "3.34.12-Prizren"），
+        # 不能用严格相等与主版本号比较。
+        checks["qgis_version"] = "PASS" if version.startswith(EXPECTED_VERSION) else \
             f"FAIL: got {version}"
         result["qgis_version"] = version
 
