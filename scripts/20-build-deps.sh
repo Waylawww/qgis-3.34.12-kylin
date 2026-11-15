@@ -991,7 +991,7 @@ for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
             "qt:dep_qt" "qwt:dep_qwt" "qscintilla:dep_qscintilla" \
             "qca:dep_qca" "qtkeychain:dep_qtkeychain" \
             "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py" \
-            "python_runtime:dep_python_runtime"; do
+            "python_runtime2:dep_python_runtime"; do
   run_dep "${pair%%:*}" "${pair##*:}"
 done
 
