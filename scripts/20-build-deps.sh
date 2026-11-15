@@ -469,13 +469,39 @@ dep_proj() {
 dep_gdal() {
   fetch_source GDAL "$GDAL_TARBALL" "$SRC/gdal" CMakeLists.txt || return 1
   cmake_install gdal "$SRC/gdal" \
-    -DBUILD_PYTHON_BINDINGS:BOOL=OFF -DBUILD_JAVA_BINDINGS:BOOL=OFF \
+    -DBUILD_PYTHON_BINDINGS:BOOL=ON -DBUILD_JAVA_BINDINGS:BOOL=OFF \
     -DBUILD_CSHARP_BINDINGS:BOOL=OFF \
     -DGDAL_BUILD_OPTIONAL_DRIVERS:BOOL=OFF \
     -DOGR_BUILD_OPTIONAL_DRIVERS:BOOL=OFF \
     -DGDAL_USE_CURL:BOOL=OFF -DGDAL_USE_POSTGRESQL:BOOL=OFF \
     -DGDAL_USE_ZSTD:BOOL=OFF -DGDAL_USE_GEOTIFF:BOOL=OFF \
     -DPROJ_ROOT:PATH="$DEPS_PREFIX" || return 1
+  # 捆绑 GDAL Python 绑定（osgeo 模块）到私有 site-packages，版本对齐打包的
+  # GDAL 3.5.3，确保运行期 processing/grassprovider 插件能 `import osgeo`，
+  # 且不会加载两套 libgdal（避免 ABI 冲突导致 QGIS 崩溃）。
+  # 绑定本身链的是本次编出的 libgdal.so.30，随 deps 前缀一起打进 RPM。
+  mkdir -p "$PY_SITE"
+  local src=""
+  for cand in "$DEPS_PREFIX/lib/python3.7/site-packages" \
+              "$DEPS_PREFIX/lib64/python3.7/site-packages" \
+              /usr/lib64/python3.7/site-packages \
+              /usr/local/lib64/python3.7/site-packages; do
+    if [[ -d "$cand/osgeo" ]]; then src="$cand"; break; fi
+  done
+  if [[ -z "$src" ]]; then
+    warn "未找到 GDAL Python 绑定(osgeo)；processing/grassprovider 将缺少 osgeo。"
+    warn "构建机需安装 swig（10-probe-env.sh 已要求），并以 FORCE_REBUILD_DEPS=true 重跑。"
+    [[ -x "$DEPS_PREFIX/bin/gdalinfo" ]] || installed_lib libgdal.so
+    return 0
+  fi
+  cp -a "$src/osgeo" "$PY_SITE/"
+  for m in gdal.py ogr.py osr.py gdalconst.py; do
+    [[ -f "$src/$m" ]] && cp -a "$src/$m" "$PY_SITE/"
+  done
+  LD_LIBRARY_PATH="$DEPS_PREFIX/lib:$DEPS_PREFIX/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    PYTHONPATH="$PY_SITE" python3 -c \
+    'from osgeo import gdal, ogr, osr; print("osgeo ok", gdal.__version__)' \
+    || { echo "ERROR: osgeo 导入失败（libgdal 版本不匹配？）"; return 1; }
   [[ -x "$DEPS_PREFIX/bin/gdalinfo" ]] || installed_lib libgdal.so
 }
 dep_spatialindex() {
@@ -958,7 +984,7 @@ dep_qsci_py() {
 }
 
 for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
-            "libzip:dep_libzip" "exiv2:dep_exiv2" "gdal:dep_gdal" \
+            "libzip:dep_libzip" "exiv2:dep_exiv2" "gdal_py:dep_gdal" \
             "qt:dep_qt" "qwt:dep_qwt" "qscintilla:dep_qscintilla" \
             "qca:dep_qca" "qtkeychain:dep_qtkeychain" \
             "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py" \
