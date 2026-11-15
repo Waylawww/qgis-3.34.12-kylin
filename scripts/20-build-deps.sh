@@ -702,6 +702,77 @@ PY
   [[ -x "$DEPS_PREFIX/bin/sip-build" ]] || return 1
 }
 
+# QGIS 3.34 桌面插件（MetaSearch / processing / grassprovider 等）运行期依赖的
+# 纯 Python 第三方包。正常发行版里这些由系统 RPM（python3-pygments / python3-yaml
+# / python3-owslib ...）提供，但本自包含构建把 Python 路径只指向私有
+# site-packages（$DEPS_PREFIX/lib/python3.7/site-packages，见 30-build-qgis.sh 的
+# /usr/bin wrapper 与 rpmbuild 阶段 cp -a python3.7），目标机系统 site-packages
+# 并不在路径内。因此 pygments / PyYAML 这类插件依赖必须随依赖前缀一起打包，否则
+# 真机打开 QGIS 时插件加载失败：
+#   2026-11-15 真机反馈
+#     ModuleNotFoundError: No module named 'pygments'  (MetaSearch)
+#     ModuleNotFoundError: No module named 'yaml'     (processing / grassprovider)
+# 版本全部钉死到仍支持 Python 3.7 的最后版本（requests 2.32+ / urllib3 2.2+ /
+# pygments 2.18+ 已要求 3.8，故走低版本线），并显式钉住它们会拉取的传递依赖，
+# 避免 pip 解析到不支持 3.7 的新版本。
+# 把一组 requirements 装进私有 site-packages：先试清华 PyPI 镜像，失败回退官方。
+pip_install_reqs() {
+  local reqfile="$1"
+  if python3 -m pip install --no-cache-dir --disable-pip-version-check \
+        --target "$PY_SITE" -r "$reqfile" \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple >/dev/null 2>&1; then
+    return 0
+  fi
+  log "  PyPI 镜像失败，回退官方 PyPI"
+  python3 -m pip install --no-cache-dir --disable-pip-version-check \
+        --target "$PY_SITE" -r "$reqfile"
+}
+
+dep_python_runtime() {
+  log "== 安装运行期 Python 第三方包到私有 site-packages =="
+  mkdir -p "$PY_SITE"
+
+  # --- 必须项：纯 Python、无编译、低风褐，且是插件加载的硬依赖 ----------------
+  local reqs
+  reqs="$(mktemp -t qgis-pyrt-XXXXXX.txt)"
+  cat > "$reqs" <<'REQ'
+pygments==2.17.2
+PyYAML==6.0.1
+requests==2.31.0
+urllib3==1.26.18
+idna==3.4
+charset-normalizer==3.1.0
+certifi==2023.7.22
+jinja2==3.1.2
+MarkupSafe==2.1.5
+six==1.16.0
+pytz==2023.3.0
+REQ
+  pip_install_reqs "$reqs" || { rm -f "$reqs"; return 1; }
+  rm -f "$reqs"
+  # 严格门禁：任一缺失即视为依赖未完成，禁止进入打包阶段（与 dep_sip 同口径）。
+  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+    'import pygments, yaml, requests, jinja2, markupsafe, six, pytz, urllib3, idna, certifi; print("py-runtime ok")' \
+    || return 1
+  log "  必须项就绪: pygments/PyYAML/requests/jinja2 ..."
+
+  # --- 可选项：owslib 依赖 lxml（含 C 扩展，构建机若无预编译 wheel 需本地编译且
+  # 要 libxml2/libxslt 头文件，可能失败）。MetaSearch 的 CSW 目录浏览才需要它，
+  # 不影响插件加载，故安装失败仅告警、不阻断打包。
+  local opt
+  opt="$(mktemp -t qgis-pyrt-opt-XXXXXX.txt)"
+  cat > "$opt" <<'REQ'
+owslib==0.28.0
+lxml==4.9.3
+REQ
+  if pip_install_reqs "$opt"; then
+    log "  可选项就绪: owslib/lxml（MetaSearch CSW 功能可用）"
+  else
+    warn "  可选项 owslib/lxml 安装失败（可能缺少 lxml 编译依赖）；MetaSearch CSW 浏览将不可用，但插件可正常加载，继续打包"
+  fi
+  rm -f "$opt"
+}
+
 # PyQt5 5.15.6 sdist 只生成 bindings，不提供 PyQt5.sip 扩展模块
 # （Requires-Dist: PyQt5-sip>=12.8,<13；PyQt-builder 1.14.0 设 abi=12.11）。
 install_pyqt5_sip() {
@@ -890,7 +961,8 @@ for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
             "libzip:dep_libzip" "exiv2:dep_exiv2" "gdal:dep_gdal" \
             "qt:dep_qt" "qwt:dep_qwt" "qscintilla:dep_qscintilla" \
             "qca:dep_qca" "qtkeychain:dep_qtkeychain" \
-            "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py"; do
+            "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py" \
+            "python_runtime:dep_python_runtime"; do
   run_dep "${pair%%:*}" "${pair##*:}"
 done
 
