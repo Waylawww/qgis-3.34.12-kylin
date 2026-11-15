@@ -758,7 +758,19 @@ dep_python_runtime() {
   log "== 安装运行期 Python 第三方包到私有 site-packages =="
   mkdir -p "$PY_SITE"
 
-  # --- 必须项：纯 Python、无编译、低风褐，且是插件加载的硬依赖 ----------------
+  # --- 必须项：QGIS 桌面插件（MetaSearch / processing / grassprovider 等）
+  # 加载时的硬依赖。正常发行版由系统 RPM（python3-pygments / python3-yaml /
+  # python3-owslib / python3-psycopg2 ...）提供，但本自包含构建只把 Python 路径
+  # 指向私有 site-packages（$DEPS_PREFIX/lib/python3.7/site-packages），目标机
+  # 系统 site-packages 不在路径内，因此这些包必须随依赖前缀一起打包，否则真机
+  # 打开 QGIS 时插件加载失败（2026-11-15 真机逐个反馈补齐）：
+  #   No module named 'pygments'  (MetaSearch)
+  #   No module named 'yaml'      (processing / grassprovider)
+  #   No module named 'osgeo'     (processing / grassprovider, 见 dep_gdal)
+  #   No module named 'psycopg2'  (processing / grassprovider, GdalUtils.py)
+  #   numpy / owslib / lxml        (processing 算法链 / MetaSearch CSW)
+  # 均为带预编译 wheel 的包（numpy / psycopg2-binary / lxml / owslib），版本钉死到
+  # 仍支持 Python 3.7 的最后版本。psycopg2-binary 自带 libpq，免运行期依赖系统 pg。
   local reqs
   reqs="$(mktemp -t qgis-pyrt-XXXXXX.txt)"
   cat > "$reqs" <<'REQ'
@@ -773,30 +785,21 @@ jinja2==3.1.2
 MarkupSafe==2.1.5
 six==1.16.0
 pytz==2023.3.0
+python-dateutil==2.8.2
+numpy==1.21.6
+psycopg2-binary==2.9.9
+owslib==0.28.0
+lxml==4.9.3
 REQ
   pip_install_reqs "$reqs" || { rm -f "$reqs"; return 1; }
   rm -f "$reqs"
   # 严格门禁：任一缺失即视为依赖未完成，禁止进入打包阶段（与 dep_sip 同口径）。
-  PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
-    'import pygments, yaml, requests, jinja2, markupsafe, six, pytz, urllib3, idna, certifi; print("py-runtime ok")' \
+  # 注入 deps lib 路径，确保 psycopg2-binary 自带 libpq 与 osgeo 的 libgdal 可解析。
+  LD_LIBRARY_PATH="$DEPS_PREFIX/lib:$DEPS_PREFIX/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    PYTHONPATH="$PY_SITE${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
+    'import pygments, yaml, requests, jinja2, markupsafe, six, pytz, dateutil, urllib3, idna, certifi, numpy, psycopg2, owslib, lxml; print("py-runtime ok")' \
     || return 1
-  log "  必须项就绪: pygments/PyYAML/requests/jinja2 ..."
-
-  # --- 可选项：owslib 依赖 lxml（含 C 扩展，构建机若无预编译 wheel 需本地编译且
-  # 要 libxml2/libxslt 头文件，可能失败）。MetaSearch 的 CSW 目录浏览才需要它，
-  # 不影响插件加载，故安装失败仅告警、不阻断打包。
-  local opt
-  opt="$(mktemp -t qgis-pyrt-opt-XXXXXX.txt)"
-  cat > "$opt" <<'REQ'
-owslib==0.28.0
-lxml==4.9.3
-REQ
-  if pip_install_reqs "$opt"; then
-    log "  可选项就绪: owslib/lxml（MetaSearch CSW 功能可用）"
-  else
-    warn "  可选项 owslib/lxml 安装失败（可能缺少 lxml 编译依赖）；MetaSearch CSW 浏览将不可用，但插件可正常加载，继续打包"
-  fi
-  rm -f "$opt"
+  log "  必须项就绪: pygments/PyYAML/requests/jinja2/numpy/psycopg2/owslib/lxml ..."
 }
 
 # PyQt5 5.15.6 sdist 只生成 bindings，不提供 PyQt5.sip 扩展模块

@@ -165,6 +165,15 @@ pyqgis_smoke() {
     "${EVID}/pyqgis-smoke.json"
 }
 
+# 校验桌面插件运行期依赖是否真的随包打进私有 site-packages，避免再出现
+# "No module named 'psycopg2'/'osgeo'/..." 这类只在真机打开 QGIS 才暴露的坑。
+plugin_py_deps() {
+  LD_LIBRARY_PATH="${DEPS}/lib:${DEPS}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    PYTHONPATH="${DEPS}/lib/python3.7/site-packages:${PREFIX}/share/qgis/python${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 -c 'import psycopg2, numpy, owslib, lxml, yaml, pygments, osgeo; print("plugin py deps ok")' \
+    || return 1
+}
+
 echo "== 运行自测 =="
 check rpm_installed          rpm_installed
 check private_libstdcpp      private_libstdcpp
@@ -173,6 +182,7 @@ check qgis_process_version   qgis_process_version
 check qgis_version           qgis_version
 check pyqgis_version         pyqgis_version
 check pyqgis_smoke           pyqgis_smoke
+check plugin_py_deps         plugin_py_deps
 echo "== 桌面 GUI(xcb) 验收（模式: ${GUI_MODE}） =="
 check xcb_files              xcb_files
 check xcb_ldd_clean          xcb_ldd_clean
@@ -196,8 +206,8 @@ if os.path.exists(smoke_path):
 
 mandatory = ("rpm_installed", "private_libstdcpp", "ldd_clean",
              "qgis_process_version", "qgis_version", "pyqgis_version",
-             "pyqgis_smoke", "map_render", "xcb_files", "xcb_ldd_clean",
-             "gui_xcb_smoke")
+             "pyqgis_smoke", "plugin_py_deps", "map_render", "xcb_files",
+             "xcb_ldd_clean", "gui_xcb_smoke")
 failed = [k for k in mandatory if checks.get(k) != "PASS"]
 render_png = os.path.join(evid, "render.png")
 gui_path = os.path.join(evid, "gui-xcb.json")
