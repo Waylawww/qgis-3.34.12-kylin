@@ -51,13 +51,13 @@ grep -q '## 16.1.0' "${GLSLANG_SRC_DIR}/CHANGES.md" || die "源码变更日志�
 
 st_sha="$(fetch_tar spirv-tools "${GLSLANG_SRC_DIR}/External/spirv-tools" \
   "https://ghproxy.net/https://github.com/KhronosGroup/SPIRV-Tools/archive/${SPIRV_TOOLS_COMMIT}.tar.gz" \
-  "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/${SPIRV_TOOLS_COMMIT}")
+  "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/${SPIRV_TOOLS_COMMIT}")"
 sh_sha="$(fetch_tar spirv-headers "${GLSLANG_SRC_DIR}/External/spirv-tools/external/spirv-headers" \
   "https://ghproxy.net/https://github.com/KhronosGroup/SPIRV-Headers/archive/${SPIRV_HEADERS_COMMIT}.tar.gz" \
-  "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/${SPIRV_HEADERS_COMMIT}")
+  "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/${SPIRV_HEADERS_COMMIT}")"
 gt_sha="$(fetch_tar googletest "${GLSLANG_SRC_DIR}/External/googletest" \
   "https://ghproxy.net/https://github.com/google/googletest/archive/${GOOGLETEST_COMMIT}.tar.gz" \
-  "https://codeload.github.com/google/googletest/tar.gz/${GOOGLETEST_COMMIT}")
+  "https://codeload.github.com/google/googletest/tar.gz/${GOOGLETEST_COMMIT}")"
 
 [[ -f "${GLSLANG_SRC_DIR}/External/spirv-tools/CMakeLists.txt" ]] || die "SPIRV-Tools 缺少 CMakeLists.txt"
 [[ -d "${GLSLANG_SRC_DIR}/External/spirv-tools/external/spirv-headers/include" ]] || die "SPIRV-Headers 目录不完整"
