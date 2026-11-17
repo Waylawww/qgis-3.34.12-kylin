@@ -66,7 +66,8 @@ assimp_version() {
   local out
   out="$("$BIN" version 2>&1)"
   printf '%s\n' "$out"
-  grep -q "${ASSIMP_VERSION}" <<<"$out"
+  # CLI 只打印 "Version 6.0"，完整 6.0.5 由 pkg_config_version 校验
+  grep -Eq "Version ${ASSIMP_VERSION%.*}([^0-9]|$)" <<<"$out"
 }
 
 assimp_info() {

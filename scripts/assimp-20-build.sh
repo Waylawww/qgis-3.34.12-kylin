@@ -7,7 +7,6 @@ load_build_env
 source "${REPO_ROOT}/config/assimp.env"
 
 need_cmd python3 "版本比较"
-need_cmd ctest   "单元测试"
 need_cmd objdump "ISA 校验"
 need_cmd rpmbuild "RPM 打包"
 
@@ -105,10 +104,14 @@ printf '%s\n' "${CMAKE_ARGS[@]}" > "${ASSIMP_REPORT_DIR}/assimp-cmake-args.txt"
 "$CMAKE" --build "$BUILD" --parallel "$JOBS" 2>&1 | tee "${LOG}/assimp-build.log"
 
 # ---------------- 单元测试（失败也先留下证据，最后统一判定） ----------------
+# assimp 6.0.5 的 test/CMakeLists.txt 只有 add_test()，顶层没有 enable_testing()，
+# 因此 `ctest` 在根目录永远报 "No tests were found!!!" 且退出码 0（假成功）。
+# 直接运行 unit 可执行文件才是真实测试。
+UNIT_BIN="$(find "$BUILD" -type f -name unit -perm -u+x | head -n1)"
+[[ -n "$UNIT_BIN" ]] || die "未找到 unit 测试程序，编译阶段不完整"
 CTEST_RC=0
-ctest --test-dir "$BUILD" --output-on-failure -j"$JOBS" 2>&1 \
-  | tee "${LOG}/assimp-ctest.log" || CTEST_RC=$?
-log "ctest 退出码: ${CTEST_RC}"
+"$UNIT_BIN" 2>&1 | tee "${LOG}/assimp-ctest.log" || CTEST_RC=$?
+log "unit 测试退出码: ${CTEST_RC}"
 
 # ---------------- DESTDIR 安装 + 私有前缀 ----------------------------------
 rm -rf "$STAGE" "$ASSIMP_LOCAL_ROOT"
