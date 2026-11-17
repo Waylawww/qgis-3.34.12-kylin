@@ -1,0 +1,120 @@
+name: glslang 16.1.0 · Native Kylin V10 x86_64 build/install/test
+
+on:
+  push:
+    branches:
+      - feat/glslang-kylin-native
+    paths:
+      - '.github/workflows/glslang-native.yml'
+      - 'config/glslang.env'
+      - 'scripts/glslang-*.sh'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: '执行阶段：preflight / source / build / install / all'
+        type: choice
+        options: [preflight, source, build, install, all]
+        default: all
+      build_jobs:
+        description: '并行编译任务数'
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: glslang-native-kylin-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GLSLANG_VERSION: '16.1.0'
+  STAGE: ${{ github.event.inputs.stage || 'all' }}
+  GLSLANG_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '4' }}
+
+jobs:
+  native-build:
+    name: Native glslang build on kylin-v10-hygon
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, X64, kylin-v10-hygon, qgis-build]
+    timeout-minutes: 360
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          [[ "$(uname -m)" == "x86_64" ]] || { echo "::error::not x86_64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      # runner 直连 github.com 超时，使用 ghproxy 反向代理克隆。
+      - name: Checkout trusted branch via ghproxy
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: 'url.https://ghproxy.net/https://github.com/.insteadOf'
+          GIT_CONFIG_VALUE_0: 'https://github.com/'
+        run: |
+          set -euo pipefail
+          REPO_DIR="${GITHUB_WORKSPACE}/glslang-build-repo"
+          rm -rf "$REPO_DIR"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$REPO_DIR"
+          echo "REPO_ROOT=$REPO_DIR" >> "$GITHUB_ENV"
+          git -C "$REPO_DIR" --no-pager log -1 --oneline
+
+      - name: Prepare persistent directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          export GLSLANG_WORK="$BASE/_glslang-1610-work"
+          export GLSLANG_OUT_DIR="$BASE/_glslang-1610-out"
+          export GLSLANG_REPORT_DIR="$BASE/_glslang-1610-reports"
+          export DEPS_PREFIX="$BASE/_qgis-334-deps"
+          export CACHE_DIR="$BASE/_qgis-334-cache"
+          mkdir -p "$GLSLANG_WORK" "$GLSLANG_OUT_DIR/rpms" \
+                   "$GLSLANG_REPORT_DIR/logs" "$DEPS_PREFIX" "$CACHE_DIR"
+          {
+            echo "GLSLANG_WORK=$GLSLANG_WORK"
+            echo "GLSLANG_OUT_DIR=$GLSLANG_OUT_DIR"
+            echo "GLSLANG_REPORT_DIR=$GLSLANG_REPORT_DIR"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+            echo "CACHE_DIR=$CACHE_DIR"
+          } >> "$GITHUB_ENV"
+          df -h "$BASE"; free -h
+
+      - name: Native build / install / test entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$REPO_ROOT"
+          bash scripts/glslang-native-build.sh 2>&1 | tee "$GLSLANG_REPORT_DIR/logs/glslang-native-build.log"
+
+      - name: Failure tail
+        if: failure()
+        shell: bash
+        run: |
+          tail -n 160 "$GLSLANG_REPORT_DIR/logs/glslang-native-build.log" 2>/dev/null || true
+          tail -n 120 "$GLSLANG_REPORT_DIR/logs/glslang-ctest.log" 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glslang-1610-evidence-${{ github.run_number }}
+          path: ${{ env.GLSLANG_REPORT_DIR }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glslang-1610-rpm-${{ github.run_number }}
+          path: ${{ env.GLSLANG_OUT_DIR }}/rpms/*.rpm
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90
