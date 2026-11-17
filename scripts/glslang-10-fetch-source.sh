@@ -9,7 +9,8 @@ need_cmd curl "源码下载"
 need_cmd tar  "源码解压"
 log "== 阶段 1 / FETCH GLSLANG ${GLSLANG_VERSION} (${GLSLANG_TAG}) =="
 
-SIG="${GLSLANG_VERSION}|${GLSLANG_COMMIT}|${SPIRV_TOOLS_COMMIT}|${SPIRV_HEADERS_COMMIT}|${GOOGLETEST_COMMIT}"
+# main-tot 是移动 tag，必须按固定 commit 归档下载；v2 后缀用于让旧缓存失效。
+SIG="v2-by-commit|${GLSLANG_VERSION}|${GLSLANG_COMMIT}|${SPIRV_TOOLS_COMMIT}|${SPIRV_HEADERS_COMMIT}|${GOOGLETEST_COMMIT}"
 STAMP="${GLSLANG_WORK}/.source-ready"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -f "${GLSLANG_SRC_DIR}/CMakeLists.txt" \
@@ -41,9 +42,9 @@ fetch_tar() {
 }
 
 main_sha="$(fetch_tar glslang "$GLSLANG_SRC_DIR" \
-  "https://ghproxy.net/https://github.com/${GLSLANG_REPO#https://github.com/}/archive/refs/tags/${GLSLANG_TAG}.tar.gz" \
-  "https://codeload.github.com/${GLSLANG_REPO#https://github.com/}/tar.gz/refs/tags/${GLSLANG_TAG}" \
-  "https://github.com/${GLSLANG_REPO#https://github.com/}/archive/refs/tags/${GLSLANG_TAG}.tar.gz")"
+  "https://ghproxy.net/https://github.com/${GLSLANG_REPO#https://github.com/}/archive/${GLSLANG_COMMIT}.tar.gz" \
+  "https://codeload.github.com/${GLSLANG_REPO#https://github.com/}/tar.gz/${GLSLANG_COMMIT}" \
+  "https://github.com/${GLSLANG_REPO#https://github.com/}/archive/${GLSLANG_COMMIT}.tar.gz")"
 
 grep -q 'cmake_minimum_required(VERSION 3.22.1)' "${GLSLANG_SRC_DIR}/CMakeLists.txt" \
   || die "源码 CMake 最低版本与锁定值不符"
