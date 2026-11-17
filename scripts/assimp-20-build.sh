@@ -116,6 +116,40 @@ mkdir -p "$STAGE" "$ASSIMP_LOCAL_ROOT" "${STAGE_PREFIX}/share/assimp-selftest"
 DESTDIR="$STAGE" "$CMAKE" --install "$BUILD" 2>&1 | tee "${LOG}/assimp-install.log"
 [[ -d "${STAGE_PREFIX}/lib64" ]] || die "DESTDIR 安装未产生 ${STAGE_PREFIX}/lib64"
 cp -f "${SRC}/test/models/OBJ/box.obj" "${STAGE_PREFIX}/share/assimp-selftest/box.obj"
+
+# GCC11 运行库：麒麟系统 /usr/lib64 的 libstdc++.so.6 来自 gcc-7.3.0，
+# 不含 GLIBCXX_3.4.29，而本机 gcc 11 编出的 libassimp 需要它。必须随 RPM
+# 一起打包，否则目标机 ldd/启动失败（QGIS 真机曾踩同一个坑）。
+find_gcc_runtime() {
+  local cand dir base
+  for cand in \
+    "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)" \
+    "${DEPS_PREFIX:-}/lib/libstdc++.so.6" \
+    "${DEPS_PREFIX:-}/lib64/libstdc++.so.6" \
+    /usr/local/gcc11/lib64/libstdc++.so.6 \
+    /usr/local/gcc11/lib/libstdc++.so.6 \
+    /usr/lib/gcc/x86_64-redhat-linux/11/libstdc++.so.6; do
+    [[ -e "$cand" ]] || continue
+    base="$(readlink -f "$cand" 2>/dev/null || true)"
+    [[ -n "$base" && -f "$base" ]] || continue
+    if grep -aq 'GLIBCXX_3\.4\.29' "$base" 2>/dev/null; then
+      dirname "$base"
+      return 0
+    fi
+  done
+  return 1
+}
+GCC_LIBDIR="$(find_gcc_runtime || true)"
+[[ -n "$GCC_LIBDIR" ]] || die "未找到含 GLIBCXX_3.4.29 的 GCC11 libstdc++ 运行库"
+cp -L "${GCC_LIBDIR}/$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
+   "${STAGE_PREFIX}/lib64/" 2>/dev/null || cp -L "${GCC_LIBDIR}/libstdc++.so.6" "${STAGE_PREFIX}/lib64/"
+ln -sfn "$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
+  "${STAGE_PREFIX}/lib64/libstdc++.so.6"
+if [[ -f "${GCC_LIBDIR}/libgcc_s.so.1" ]]; then
+  cp -L "${GCC_LIBDIR}/libgcc_s.so.1" "${STAGE_PREFIX}/lib64/" || true
+fi
+log "已随包打入 GCC11 运行库: $(ls -1 "${STAGE_PREFIX}/lib64"/libstdc++.so.6* | tr '\n' ' ')"
+
 cp -a "$STAGE/." "$ASSIMP_LOCAL_ROOT/"
 
 # /usr/bin wrapper 只在 RPM 里声明，构建机 /usr 不被写入
@@ -131,6 +165,7 @@ chmod 755 "${STAGE}/usr/bin/assimp"
 LIB="${LOCAL_PREFIX}/lib64/libassimp.so.${ASSIMP_VERSION}"
 [[ -e "$LIB" ]] || LIB="$(find "${LOCAL_PREFIX}/lib64" -maxdepth 1 -name 'libassimp.so*' -print -quit)"
 [[ -n "$LIB" ]] || die "安装树中没有 libassimp.so"
+export LD_LIBRARY_PATH="${LOCAL_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 ldd_out="$(ldd "$LIB" 2>&1 || true)"
 printf '%s\n' "$ldd_out" > "${ASSIMP_REPORT_DIR}/assimp-ldd.txt"
 grep -q 'not found' <<<"$ldd_out" && die "libassimp 动态库依赖未闭合: $ldd_out"

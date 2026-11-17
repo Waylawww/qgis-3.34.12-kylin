@@ -18,6 +18,22 @@ URLS=(
 )
 
 log "== 阶段 1 / FETCH ASSIMP ${ASSIMP_VERSION} =="
+STAMP="${ASSIMP_WORK}/.source-ready"
+if [[ -f "$STAMP" && -f "${ASSIMP_SRC_DIR}/CMakeLists.txt" ]] \
+   && grep -q 'bool isDone()' "${ASSIMP_SRC_DIR}/code/AssetLib/Obj/ObjFileParser.h"; then
+  cached_sha="$(cat "$STAMP")"
+  log "复用已校验源码（tarball sha256=${cached_sha}），避免重复下载触发全量重编"
+  python3 - "${ASSIMP_REPORT_DIR}" "${cached_sha}" "${ASSIMP_SRC_DIR}" <<'PY'
+import json, os, sys
+rep, sha, src = sys.argv[1:4]
+with open(os.path.join(rep, 'assimp-source.json'), 'w', encoding='utf-8') as f:
+    json.dump({'stage': 'ASSIMP_STAGE_1_SOURCE', 'tarball_sha256': sha,
+               'source_dir': src, 'verdict': 'PASS (cached)'}, f, indent=2)
+PY
+  stage_marker ASSIMP_STAGE_1_SOURCE_OK PASS "${ASSIMP_REPORT_DIR}/assimp-source-ok.json"
+  info "ASSIMP SOURCE PASS (cached)"
+  exit 0
+fi
 rm -f "$TARBALL"
 for url in "${URLS[@]}"; do
   log "尝试下载: $url"
@@ -76,5 +92,6 @@ with open(os.path.join(rep, 'assimp-source.json'), 'w', encoding='utf-8') as f:
 print(json.dumps(data, ensure_ascii=False, indent=2))
 PY
 
+printf '%s\n' "$tarball_sha" > "$STAMP"
 stage_marker ASSIMP_STAGE_1_SOURCE_OK PASS "${ASSIMP_REPORT_DIR}/assimp-source-ok.json"
 info "ASSIMP SOURCE PASS"
