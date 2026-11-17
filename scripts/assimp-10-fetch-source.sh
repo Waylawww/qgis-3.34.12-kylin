@@ -19,9 +19,10 @@ URLS=(
 
 log "== 阶段 1 / FETCH ASSIMP ${ASSIMP_VERSION} =="
 STAMP="${ASSIMP_WORK}/.source-ready"
-if [[ -f "$STAMP" && -f "${ASSIMP_SRC_DIR}/CMakeLists.txt" ]] \
+if [[ -f "${ASSIMP_SRC_DIR}/CMakeLists.txt" ]] \
+   && grep -q "VERSION ${ASSIMP_VERSION}" "${ASSIMP_SRC_DIR}/CMakeLists.txt" \
    && grep -q 'bool isDone()' "${ASSIMP_SRC_DIR}/code/AssetLib/Obj/ObjFileParser.h"; then
-  cached_sha="$(cat "$STAMP")"
+  cached_sha="$(cat "$STAMP" 2>/dev/null || echo 'cached-from-previous-run')"
   log "复用已校验源码（tarball sha256=${cached_sha}），避免重复下载触发全量重编"
   python3 - "${ASSIMP_REPORT_DIR}" "${cached_sha}" "${ASSIMP_SRC_DIR}" <<'PY'
 import json, os, sys
