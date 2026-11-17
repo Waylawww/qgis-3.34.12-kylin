@@ -109,6 +109,16 @@ printf '%s\n' "${CMAKE_ARGS[@]}" > "${ASSIMP_REPORT_DIR}/assimp-cmake-args.txt"
 # 直接运行 unit 可执行文件才是真实测试。
 UNIT_BIN="$(find "$BUILD" -type f -name unit -perm -u+x | head -n1)"
 [[ -n "$UNIT_BIN" ]] || die "未找到 unit 测试程序，编译阶段不完整"
+# unit / libassimp 由 GCC11 编译，运行前必须让动态加载器看到新版 libstdc++，
+# 否则直接报 GLIBCXX_3.4.29 / CXXABI_1.3.13 not found 而以退出码 1 失败。
+GCC_RT="$(dirname "$(readlink -f "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || echo /nonexistent)")" 2>/dev/null || true)"
+if [[ -n "$GCC_RT" && -f "${GCC_RT}/libstdc++.so.6" ]] \
+   && grep -aq 'GLIBCXX_3\.4\.29' "${GCC_RT}/libstdc++.so.6" 2>/dev/null; then
+  export LD_LIBRARY_PATH="${GCC_RT}:${BUILD}/bin${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+  log "unit 运行库: ${GCC_RT}"
+else
+  die "未定位到 GCC11 libstdc++ 运行库，unit 无法运行"
+fi
 CTEST_RC=0
 "$UNIT_BIN" 2>&1 | tee "${LOG}/assimp-ctest.log" || CTEST_RC=$?
 log "unit 测试退出码: ${CTEST_RC}"
