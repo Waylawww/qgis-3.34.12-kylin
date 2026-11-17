@@ -1,0 +1,118 @@
+name: Assimp 6.0.5 · Native Kylin V10 x86_64 build/install/test
+
+# 与 QGIS 共用同一台 self-hosted runner（即未来目标安装设备）。
+# 不接受 pull_request；push 仅允许本分支，避免不可信代码在真机执行。
+on:
+  push:
+    branches:
+      - feat/assimp-kylin-native
+    paths:
+      - '.github/workflows/assimp-native.yml'
+      - 'config/assimp.env'
+      - 'patches/**'
+      - 'scripts/assimp-*.sh'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: '执行阶段：preflight / source / build / install / all'
+        type: choice
+        options: [preflight, source, build, install, all]
+        default: all
+      build_jobs:
+        description: '并行编译任务数'
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assimp-native-kylin-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ASSIMP_VERSION: '6.0.5'
+  STAGE: ${{ github.event.inputs.stage || 'all' }}
+  ASSIMP_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '4' }}
+
+jobs:
+  native-build:
+    name: Native Assimp build on kylin-v10-hygon
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, X64, kylin-v10-hygon, qgis-build]
+    timeout-minutes: 360
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          echo "workspace=${GITHUB_WORKSPACE}"
+          [[ "$(uname -m)" == "x86_64" ]] || { echo "::error::not x86_64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      - name: Checkout trusted branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare persistent directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          export ASSIMP_WORK="$BASE/_assimp-605-work"
+          export ASSIMP_OUT_DIR="$BASE/_assimp-605-out"
+          export ASSIMP_REPORT_DIR="$BASE/_assimp-605-reports"
+          export DEPS_PREFIX="$BASE/_qgis-334-deps"
+          export CACHE_DIR="$BASE/_qgis-334-cache"
+          mkdir -p "$ASSIMP_WORK" "$ASSIMP_OUT_DIR/rpms" \
+                   "$ASSIMP_REPORT_DIR/logs" "$DEPS_PREFIX" "$CACHE_DIR"
+          {
+            echo "ASSIMP_BUILD_BASE=$BASE"
+            echo "ASSIMP_WORK=$ASSIMP_WORK"
+            echo "ASSIMP_OUT_DIR=$ASSIMP_OUT_DIR"
+            echo "ASSIMP_REPORT_DIR=$ASSIMP_REPORT_DIR"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+            echo "CACHE_DIR=$CACHE_DIR"
+          } >> "$GITHUB_ENV"
+          df -h "$BASE"
+          free -h
+
+      - name: Native build / install / test entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/assimp-native-build.sh 2>&1 | tee "$ASSIMP_REPORT_DIR/logs/assimp-native-build.log"
+
+      - name: Failure tail (fast triage)
+        if: failure()
+        shell: bash
+        run: |
+          echo '===== assimp-native-build.log tail ====='
+          tail -n 160 "$ASSIMP_REPORT_DIR/logs/assimp-native-build.log" 2>/dev/null || true
+          echo '===== ctest tail ====='
+          tail -n 100 "$ASSIMP_REPORT_DIR/logs/assimp-ctest.log" 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assimp-605-evidence-${{ github.run_number }}
+          path: |
+            ${{ env.ASSIMP_REPORT_DIR }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assimp-605-rpm-${{ github.run_number }}
+          path: |
+            ${{ env.ASSIMP_OUT_DIR }}/rpms/*.rpm
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90
