@@ -21,6 +21,27 @@ LOG="${GLSLANG_REPORT_DIR}/logs"
 mkdir -p "$LOG" "${TOP}/SPECS" "${TOP}/RPMS" "${GLSLANG_OUT_DIR}/rpms"
 log "== 阶段 2 / BUILD GLSLANG ${GLSLANG_VERSION} (native, jobs=$JOBS) =="
 
+# 自举 CMake 与后续 unit 都由 GCC11 编译，必须先让加载器看到新版 libstdc++。
+locate_gcc_runtime() {
+  local cand base
+  for cand in \
+    "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)" \
+    "${DEPS_PREFIX:-}/lib/libstdc++.so.6" \
+    "${DEPS_PREFIX:-}/lib64/libstdc++.so.6" \
+    /usr/local/gcc11/lib64/libstdc++.so.6 \
+    /usr/local/gcc11/lib/libstdc++.so.6; do
+    [[ -e "$cand" ]] || continue
+    base="$(readlink -f "$cand" 2>/dev/null || true)"
+    [[ -n "$base" && -f "$base" ]] || continue
+    if grep -aq 'GLIBCXX_3\.4\.29' "$base" 2>/dev/null; then dirname "$base"; return 0; fi
+  done
+  return 1
+}
+GCC_LIBDIR="$(locate_gcc_runtime || true)"
+[[ -n "$GCC_LIBDIR" ]] || die "未找到含 GLIBCXX_3.4.29 的 GCC11 libstdc++ 运行库"
+export LD_LIBRARY_PATH="${GCC_LIBDIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+log "GCC11 runtime: ${GCC_LIBDIR}"
+
 cmake_version() { "$1" --version 2>/dev/null | head -n1 | awk '{print $NF}'; }
 version_ge() {
   python3 -c 'import sys; a=tuple(map(int,sys.argv[1].split(".")+["0"]*3)); b=tuple(map(int,sys.argv[2].split(".")+["0"]*3)); sys.exit(0 if a[:3]>=b[:3] else 1)' "$1" "$2"
