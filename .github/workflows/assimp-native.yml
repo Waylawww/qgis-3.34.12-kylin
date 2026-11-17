@@ -53,10 +53,29 @@ jobs:
           [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
           grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
 
-      - name: Checkout trusted branch
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      # 该 runner 直连 github.com 会超时/Empty reply（QGIS 工作流历史上也依赖
+      # ghproxy 下载源码），所以不走 actions/checkout，改用 ghproxy 反向代理克隆。
+      - name: Checkout trusted branch via ghproxy
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: 'url.https://ghproxy.net/https://github.com/.insteadOf'
+          GIT_CONFIG_VALUE_0: 'https://github.com/'
+        run: |
+          set -euo pipefail
+          REPO_DIR="${GITHUB_WORKSPACE}/assimp-build-repo"
+          rm -rf "$REPO_DIR"
+          if git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+              "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$REPO_DIR"; then
+            echo "使用 ghproxy 克隆成功"
+          else
+            rm -rf "$REPO_DIR"
+            echo "ghproxy 克隆失败，尝试直连 github.com" >&2
+            git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+              "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$REPO_DIR"
+          fi
+          echo "REPO_ROOT=$REPO_DIR" >> "$GITHUB_ENV"
+          git -C "$REPO_DIR" --no-pager log -1 --oneline
 
       - name: Prepare persistent directories
         shell: bash
@@ -85,6 +104,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          cd "$REPO_ROOT"
           bash scripts/assimp-native-build.sh 2>&1 | tee "$ASSIMP_REPORT_DIR/logs/assimp-native-build.log"
 
       - name: Failure tail (fast triage)
