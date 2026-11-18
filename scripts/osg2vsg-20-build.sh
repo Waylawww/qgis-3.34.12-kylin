@@ -53,9 +53,12 @@ cmake --install "$OSG_BUILD" 2>&1 | tee "${LOG}/osg-install.log"
 VSG_BUILD="${OSG2VSG_WORK}/build-vsg"
 log "---- VSG ${VSG_VERSION} ----"
 export VULKAN_SDK="$VULKAN_SDK_PREFIX"
+rm -rf "$VSG_BUILD"
 cmake "${GEN[@]}" -S "$VSG_SRC_DIR" -B "$VSG_BUILD" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$VSG_PREFIX" \
   -DBUILD_SHARED_LIBS=ON -DVULKAN_SDK="$VULKAN_SDK_PREFIX" \
+  -DVulkan_INCLUDE_DIR="$VULKAN_SDK_PREFIX/include" \
+  -DVulkan_LIBRARY=/usr/lib64/libvulkan.so \
   "-DCMAKE_PREFIX_PATH=${DEPS_PREFIX:-};${OSG_PREFIX};${VULKAN_SDK_PREFIX}" \
   "-DCMAKE_C_FLAGS=${ISA_CFLAGS}" "-DCMAKE_CXX_FLAGS=${ISA_CXXFLAGS}" \
   2>&1 | tee "${LOG}/vsg-cmake-config.log"
