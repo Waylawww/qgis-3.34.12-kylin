@@ -1,0 +1,118 @@
+name: rocky 1.0.2 · Native Kylin V10 x86_64 build/install/test
+
+on:
+  push:
+    branches: [feat/rocky-kylin-native]
+    paths:
+      - '.github/workflows/rocky-native.yml'
+      - 'config/rocky.env'
+      - 'scripts/rocky-*.sh'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'preflight / source / build / install / all'
+        type: choice
+        options: [preflight, source, build, install, all]
+        default: all
+      build_jobs:
+        description: '并行编译任务数'
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocky-native-kylin-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: ${{ github.event.inputs.stage || 'all' }}
+  ROCKY_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '4' }}
+
+jobs:
+  native-build:
+    name: Native rocky build on kylin-v10-hygon
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, X64, kylin-v10-hygon, qgis-build]
+    timeout-minutes: 480
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          [[ "$(uname -m)" == "x86_64" ]] || exit 1
+          [[ "$(id -u)" -ne 0 ]] || exit 1
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      - name: Checkout via ghproxy
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: 'url.https://ghproxy.net/https://github.com/.insteadOf'
+          GIT_CONFIG_VALUE_0: 'https://github.com/'
+        run: |
+          set -euo pipefail
+          D="${GITHUB_WORKSPACE}/rocky-build-repo"
+          rm -rf "$D"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$D"
+          echo "REPO_ROOT=$D" >> "$GITHUB_ENV"
+          git -C "$D" --no-pager log -1 --oneline
+
+      - name: Prepare dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          export ROCKY_WORK="$BASE/_rocky-102-work"
+          export ROCKY_OUT_DIR="$BASE/_rocky-102-out"
+          export ROCKY_REPORT_DIR="$BASE/_rocky-102-reports"
+          export DEPS_PREFIX="$BASE/_qgis-334-deps"
+          export CACHE_DIR="$BASE/_qgis-334-cache"
+          mkdir -p "$ROCKY_WORK" "$ROCKY_OUT_DIR/rpms" "$ROCKY_REPORT_DIR/logs" \
+                   "$DEPS_PREFIX" "$CACHE_DIR"
+          {
+            echo "ROCKY_WORK=$ROCKY_WORK"
+            echo "ROCKY_OUT_DIR=$ROCKY_OUT_DIR"
+            echo "ROCKY_REPORT_DIR=$ROCKY_REPORT_DIR"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+            echo "CACHE_DIR=$CACHE_DIR"
+          } >> "$GITHUB_ENV"
+          df -h "$BASE"; free -h
+
+      - name: Native entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$REPO_ROOT"
+          bash scripts/rocky-native-build.sh 2>&1 | tee "$ROCKY_REPORT_DIR/logs/rocky-native-build.log"
+
+      - name: Failure tail
+        if: failure()
+        shell: bash
+        run: |
+          tail -n 200 "$ROCKY_REPORT_DIR/logs/rocky-native-build.log" 2>/dev/null || true
+          tail -n 120 "$ROCKY_REPORT_DIR/logs/rocky-cmake-config.log" 2>/dev/null || true
+          tail -n 120 "$ROCKY_REPORT_DIR/logs/rocky-build.log" 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocky-102-evidence-${{ github.run_number }}
+          path: ${{ env.ROCKY_REPORT_DIR }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocky-102-rpm-${{ github.run_number }}
+          path: ${{ env.ROCKY_OUT_DIR }}/rpms/*.rpm
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90
