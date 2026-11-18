@@ -65,13 +65,13 @@ edit(ecs_path, [
 ])
 
 edit(cmake_path, [(
-    'file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)\nfile(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)\n',
-    '''file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)
-file(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)
-if(NOT ROCKY_HAS_IMGUI)
-  list(FILTER HEADERS_VSG_ECS EXCLUDE REGEX "LabelSystem")
-  list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")
-endif()
+    '    file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)\n    file(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)\n',
+    '''    file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)
+    file(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)
+    if(NOT ROCKY_HAS_IMGUI)
+      list(FILTER HEADERS_VSG_ECS EXCLUDE REGEX "LabelSystem")
+      list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")
+    endif()
 ''',
     'list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")')])
 PY
