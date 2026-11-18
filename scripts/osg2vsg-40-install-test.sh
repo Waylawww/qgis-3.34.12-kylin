@@ -66,7 +66,8 @@ int main() {
     return 0;
 }
 EOF
-  cmake -S "$d" -B "$d/build" -DCMAKE_PREFIX_PATH="$PFX" -DCMAKE_BUILD_TYPE=Release
+  cmake -S "$d" -B "$d/build" \
+    -DCMAKE_PREFIX_PATH="$PFX;/opt/glslang-16.1.0" -DCMAKE_BUILD_TYPE=Release
   cmake --build "$d/build" --parallel 2
   LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     OSG_LIBRARY_PATH="$LIBDIR/osgPlugins-3.6.5" "$d/build/smoke"

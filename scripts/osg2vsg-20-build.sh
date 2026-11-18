@@ -108,8 +108,9 @@ if [[ -d "${OSG_PREFIX}/${OSG_LD}/osgPlugins-3.6.5" ]]; then
 fi
 cp -a "${OSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
 cp -a "${VSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
-for d in "${OSG_PREFIX}/${OSG_LD}/cmake" "${VSG_PREFIX}/${VSG_LD}/cmake" \
-         /opt/glslang-16.1.0/lib64/cmake; do
+# glslang 的 cmake targets 引用其原安装路径，直接复制到本包会导致 find_package 失败；
+# 运行时库已单独拷贝，配置阶段让消费者使用系统已安装的 glslang 包。
+for d in "${OSG_PREFIX}/${OSG_LD}/cmake" "${VSG_PREFIX}/${VSG_LD}/cmake"; do
   [[ -d "$d" ]] || continue
   mkdir -p "${STAGE_PREFIX}/lib64/cmake"
   cp -a "$d/." "${STAGE_PREFIX}/lib64/cmake/" || true
