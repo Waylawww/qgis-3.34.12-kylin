@@ -49,8 +49,14 @@ if ! compgen -G "${DEPS_PREFIX:-}/lib*/cmake/[Pp][Rr][Oo][Jj]/*onfig.cmake" >/de
   fi
 fi
 
+VULKAN_FIRST="${ROCKY_WORK}/kylin-vulkan-first.cmake"
+cat > "$VULKAN_FIRST" <<EOF
+include_directories(BEFORE "${VULKAN_SDK_PREFIX}/include")
+EOF
+
 PREFIX_PATH="${ROCKY_DEPS_PREFIX};${DEPS_PREFIX:-};/opt/osg2vsg-0.4.0;/opt/glslang-16.1.0;${VULKAN_SDK_PREFIX}"
 cmake "${GEN[@]}" -S "$ROCKY_SRC_DIR" -B "$BUILD" \
+  -DCMAKE_PROJECT_INCLUDE="$VULKAN_FIRST" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$ROCKY_INSTALL_PREFIX" \
   -DCMAKE_INSTALL_LIBDIR=lib64 -DBUILD_SHARED_LIBS="${ROCKY_BUILD_SHARED}" \
   -DROCKY_BUILD_SHARED_LIBS="${ROCKY_BUILD_SHARED}" -DROCKY_APPEND_SO_VERSION=ON \
