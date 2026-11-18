@@ -67,7 +67,8 @@ int main() {
 }
 EOF
   cmake -S "$d" -B "$d/build" \
-    -DCMAKE_PREFIX_PATH="$PFX;/opt/glslang-16.1.0" -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_PREFIX_PATH="$PFX;/opt/glslang-16.1.0" -DCMAKE_BUILD_TYPE=Release \
+    -DVulkan_INCLUDE_DIR="${PFX}/include" -DVulkan_LIBRARY=/usr/lib64/libvulkan.so
   cmake --build "$d/build" --parallel 2
   LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     OSG_LIBRARY_PATH="$LIBDIR/osgPlugins-3.6.5" "$d/build/smoke"

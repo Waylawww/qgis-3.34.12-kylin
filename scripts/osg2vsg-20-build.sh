@@ -108,6 +108,8 @@ if [[ -d "${OSG_PREFIX}/${OSG_LD}/osgPlugins-3.6.5" ]]; then
 fi
 cp -a "${OSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
 cp -a "${VSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
+# VSG 1.1.13 与系统 vulkan-headers 1.1.92 不兼容，头文件必须随包提供
+cp -a "${VULKAN_SDK_PREFIX}/include/vulkan" "${STAGE_PREFIX}/include/" 2>/dev/null || true
 # glslang 的 cmake targets 引用其原安装路径，直接复制到本包会导致 find_package 失败；
 # 运行时库已单独拷贝，配置阶段让消费者使用系统已安装的 glslang 包。
 for d in "${OSG_PREFIX}/${OSG_LD}/cmake" "${VSG_PREFIX}/${VSG_LD}/cmake"; do
