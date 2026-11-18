@@ -13,9 +13,10 @@ patch_no_imgui() {
     "${ROCKY_SRC_DIR}/src/rocky/CMakeLists.txt" \
     "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.h" \
     "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.cpp" \
-    "${ROCKY_SRC_DIR}/src/rocky/vsg/ecs/ECSNode.cpp" <<'PY'
+    "${ROCKY_SRC_DIR}/src/rocky/vsg/ecs/ECSNode.cpp" \
+    "${ROCKY_SRC_DIR}/src/CMakeLists.txt" <<'PY'
 import sys
-cmake_path, header_path, app_path, ecs_path = sys.argv[1:5]
+cmake_path, header_path, app_path, ecs_path, src_cmake_path = sys.argv[1:6]
 
 def edit(path, pairs):
     s = open(path, encoding='utf-8').read()
@@ -74,6 +75,11 @@ edit(cmake_path, [(
     endif()
 ''',
     'list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")')])
+
+edit(src_cmake_path, [(
+    'add_subdirectory(apps)\n',
+    '# add_subdirectory(apps) # disabled: bundled demo targets need a newer VSG than 1.1.13\n',
+    '# add_subdirectory(apps) # disabled: bundled demo targets need a newer VSG than 1.1.13')])
 PY
 }
 
