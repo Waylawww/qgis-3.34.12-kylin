@@ -66,6 +66,9 @@ cmake "${GEN[@]}" -S "$VSGXCHANGE_SRC_DIR" -B "$BUILD" \
   -DVULKAN_SDK="$OSG2VSG_PREFIX" \
   -DVulkan_INCLUDE_DIR="${OSG2VSG_PREFIX}/include" \
   -DVulkan_LIBRARY=/usr/lib64/libvulkan.so \
+  -DCURL_INCLUDE_DIR=/usr/include \
+  -DCURL_LIBRARY=/usr/lib64/libcurl.so \
+  -DCURL_LIBRARIES=/usr/lib64/libcurl.so \
   "-Dvsg_DIR=${OSG2VSG_PREFIX}/lib64/cmake/vsg" \
   "-Dosg2vsg_DIR=${OSG2VSG_PREFIX}/lib64/cmake/osg2vsg" \
   "-DCMAKE_PREFIX_PATH=${OSG2VSG_PREFIX};${ASSIMP_PREFIX};${GLSLANG_PREFIX};${DEPS_PREFIX:-};${OSG2VSG_PREFIX}/lib64/cmake" \
