@@ -9,27 +9,68 @@ need_cmd curl "源码下载"; need_cmd tar "源码解压"
 log "== 阶段 1 / FETCH ROCKY ${ROCKY_VERSION} + deps =="
 
 patch_no_imgui() {
-  python3 - "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.h" "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.cpp" <<'PY'
+  python3 - \
+    "${ROCKY_SRC_DIR}/src/rocky/CMakeLists.txt" \
+    "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.h" \
+    "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.cpp" \
+    "${ROCKY_SRC_DIR}/src/rocky/vsg/ecs/ECSNode.cpp" <<'PY'
 import sys
-h, cpp = sys.argv[1:3]
-s = open(h, encoding='utf-8').read()
-old = '    class RenderImGuiContext;\n'
-new = '''#ifdef ROCKY_HAS_IMGUI
+cmake_path, header_path, app_path, ecs_path = sys.argv[1:5]
+
+def edit(path, pairs):
+    s = open(path, encoding='utf-8').read()
+    changed = False
+    for old, new, marker in pairs:
+        if marker in s:
+            continue
+        if old in s:
+            s = s.replace(old, new, 1)
+            changed = True
+    if changed:
+        open(path, 'w', encoding='utf-8').write(s)
+        print('patched ' + path.rsplit('/', 1)[-1])
+
+edit(header_path, [(
+    '    class RenderImGuiContext;\n',
+    '''#ifdef ROCKY_HAS_IMGUI
     class RenderImGuiContext;
 #else
     using RenderImGuiContext = vsg::Node;
 #endif
-'''
-if old in s and 'using RenderImGuiContext = vsg::Node;\n#endif' not in s:
-    s = s.replace(old, new, 1)
-    open(h, 'w', encoding='utf-8').write(s)
-    print('patched Application.h for no-ImGui build')
-c = open(cpp, encoding='utf-8').read()
-old_cpp = '#ifndef ROCKY_HAS_IMGUI\nusing RenderImGuiContext = vsg::Node;\n#endif\n'
-if old_cpp in c:
-    c = c.replace(old_cpp, '', 1)
-    open(cpp, 'w', encoding='utf-8').write(c)
-    print('patched Application.cpp for no-ImGui build')
+''',
+    'using RenderImGuiContext = vsg::Node;\n#endif')])
+
+edit(app_path, [
+    ('#include "ecs/LabelSystem.h"\n',
+     '#ifdef ROCKY_HAS_IMGUI\n#include "ecs/LabelSystem.h"\n#endif\n',
+     '#ifdef ROCKY_HAS_IMGUI\n#include "ecs/LabelSystem.h"\n#endif'),
+    ('    ecsNode->add(LabelSystemNode::create(registry));   \n',
+     '#ifdef ROCKY_HAS_IMGUI\n    ecsNode->add(LabelSystemNode::create(registry));\n#endif\n',
+     '#ifdef ROCKY_HAS_IMGUI\n    ecsNode->add(LabelSystemNode::create(registry));\n#endif'),
+    ('#ifndef ROCKY_HAS_IMGUI\nusing RenderImGuiContext = vsg::Node;\n#endif\n',
+     '',
+     'MARKER_ALIAS_NEVER_PRESENT'),
+])
+
+edit(ecs_path, [
+    ('#include "LabelSystem.h"\n',
+     '#ifdef ROCKY_HAS_IMGUI\n#include "LabelSystem.h"\n#endif\n',
+     '#ifdef ROCKY_HAS_IMGUI\n#include "LabelSystem.h"\n#endif'),
+    ('        add(LabelSystemNode::create(registry));\n',
+     '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystemNode::create(registry));\n#endif\n',
+     '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystemNode::create(registry));\n#endif'),
+])
+
+edit(cmake_path, [(
+    'file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)\nfile(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)\n',
+    '''file(GLOB HEADERS_VSG_ECS vsg/ecs/*.h)
+file(GLOB SOURCES_VSG_ECS vsg/ecs/*.cpp)
+if(NOT ROCKY_HAS_IMGUI)
+  list(FILTER HEADERS_VSG_ECS EXCLUDE REGEX "LabelSystem")
+  list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")
+endif()
+''',
+    'list(FILTER SOURCES_VSG_ECS EXCLUDE REGEX "LabelSystem")')])
 PY
 }
 
