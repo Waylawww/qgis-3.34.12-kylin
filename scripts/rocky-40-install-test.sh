@@ -81,7 +81,12 @@ int main() {
 }
 EOF
   cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="${PFX};/opt/osg2vsg-0.4.0;/opt/glslang-16.1.0;${VULKAN_SDK_PREFIX}" \
+    -DCMAKE_PREFIX_PATH="${PFX};${ROCKY_DEPS_PREFIX};/opt/osg2vsg-0.4.0;/opt/glslang-16.1.0;${VULKAN_SDK_PREFIX}" \
+    -Drocky_DIR="${LIBDIR}/cmake/rocky" \
+    -Dglm_DIR="${PFX}/lib/cmake/glm" \
+    -Dspdlog_DIR="${PFX}/lib/cmake/spdlog" \
+    -DEnTT_DIR="${PFX}/lib/cmake/EnTT" \
+    -Dnlohmann_json_DIR="${PFX}/lib/cmake/nlohmann_json" \
     -DVulkan_INCLUDE_DIR="${VULKAN_SDK_PREFIX}/include" \
     -DVulkan_LIBRARY=/usr/lib64/libvulkan.so
   cmake --build "$d/build" --parallel 2
@@ -101,7 +106,7 @@ upstream_tests() {
   local exe="${LIBDIR}/../bin/rocky_tests" cwd="${PFX}/share/rocky"
   [[ -x "$exe" ]] || return 0
   mkdir -p "$cwd"
-  ( cd "$cwd" && LD_LIBRARY_PATH="$LIBDIR:${PFX}/lib:/opt/osg2vsg-0.4.0/lib64:/opt/glslang-16.1.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$exe" )
+  ( cd "$cwd" && LD_LIBRARY_PATH="$LIBDIR:${PFX}/lib:/opt/osg2vsg-0.4.0/lib64:/opt/glslang-16.1.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$exe" --list-tests )
 }
 
 echo "== 安装模式: ${INSTALL_MODE} =="
