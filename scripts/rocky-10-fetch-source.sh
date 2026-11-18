@@ -63,14 +63,16 @@ ln -sfn /usr/lib64/libvulkan.so.1 "${VULKAN_SDK_PREFIX}/lib/libvulkan.so.1"
 
 install_cmake_dep() {
   local name="$1" repo="$2" ref="$3"; shift 3
-  local src="${ROCKY_WORK}/src/${name}-${ref}"
+  local src="${ROCKY_WORK}/src/${name}-${ref}" build="${ROCKY_WORK}/build-${name}"
   fetch_tar "$name" "$src" "$repo" "$ref" >/dev/null
-  cmake -G Ninja -S "$src" -B "${ROCKY_WORK}/build-${name}" \
+  rm -rf "$build"
+  cmake -G Ninja -S "$src" -B "$build" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX="$ROCKY_DEPS_PREFIX" "$@" >/dev/null
-  cmake --install "${ROCKY_WORK}/build-${name}" >/dev/null
+  cmake --build "$build" --parallel "${ROCKY_BUILD_JOBS:-4}" >/dev/null
+  cmake --install "$build" >/dev/null
 }
-install_cmake_dep glm g-truc/glm "$GLM_TAG" -DGLM_BUILD_TESTS=OFF
+install_cmake_dep glm g-truc/glm "$GLM_TAG" -DGLM_BUILD_TESTS=OFF -DGLM_BUILD_LIBRARY=OFF
 install_cmake_dep spdlog gabime/spdlog "$SPDLOG_TAG" -DSPDLOG_BUILD_SHARED=ON -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF
 install_cmake_dep nlohmann-json nlohmann/json "$NLOHMANN_JSON_TAG" -DJSON_BuildTests=OFF
 install_cmake_dep entt skypjack/entt "$ENTT_TAG" -DENTT_BUILD_TESTS=OFF -DENTT_BUILD_EXAMPLES=OFF -DENTT_BUILD_BENCHMARK=OFF
