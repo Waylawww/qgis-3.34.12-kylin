@@ -8,7 +8,7 @@ source "${REPO_ROOT}/config/osg2vsg.env"
 need_cmd curl "源码下载"; need_cmd tar "源码解压"
 log "== 阶段 1 / FETCH OSG2VSG ${OSG2VSG_VERSION} + OSG ${OSG_VERSION} + VSG ${VSG_VERSION} =="
 
-SIG="v2|${OSG2VSG_COMMIT}|${OSG_COMMIT}|${VSG_COMMIT}|${VULKAN_HEADERS_COMMIT}"
+SIG="v3|${OSG2VSG_COMMIT}|${OSG_COMMIT}|${VSG_COMMIT}|${VULKAN_HEADERS_COMMIT}"
 STAMP="${OSG2VSG_WORK}/.source-ready"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -f "${OSG2VSG_SRC_DIR}/CMakeLists.txt" \
@@ -47,8 +47,8 @@ mkdir -p "${VULKAN_SDK_PREFIX}/include" "${VULKAN_SDK_PREFIX}/lib"
 cp -a "${VULKAN_HEADERS_SRC_DIR}/include/." "${VULKAN_SDK_PREFIX}/include/"
 ln -sfn /usr/lib64/libvulkan.so "${VULKAN_SDK_PREFIX}/lib/libvulkan.so"
 ln -sfn /usr/lib64/libvulkan.so.1 "${VULKAN_SDK_PREFIX}/lib/libvulkan.so.1"
-grep -q '#define VK_HEADER_VERSION 106' "${VULKAN_SDK_PREFIX}/include/vulkan/vulkan_core.h" \
-  || die "Vulkan-Headers 版本不是 1.1.106"
+grep -q '#define VK_HEADER_VERSION 131' "${VULKAN_SDK_PREFIX}/include/vulkan/vulkan_core.h" \
+  || die "Vulkan-Headers 版本不是 1.2.131"
 grep -q 'VERSION 0.4.0' "${OSG2VSG_SRC_DIR}/CMakeLists.txt" || die "osg2vsg 版本不符"
 grep -qi 'SET(OPENSCENEGRAPH_MAJOR_VERSION 3)' "${OSG_SRC_DIR}/CMakeLists.txt" || die "OSG 版本不符"
 grep -q 'find_package(Vulkan' "${VSG_SRC_DIR}/CMakeLists.txt" || die "VSG 源码不完整"
