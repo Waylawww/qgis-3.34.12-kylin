@@ -8,6 +8,31 @@ source "${REPO_ROOT}/config/rocky.env"
 need_cmd curl "源码下载"; need_cmd tar "源码解压"
 log "== 阶段 1 / FETCH ROCKY ${ROCKY_VERSION} + deps =="
 
+patch_no_imgui() {
+  python3 - "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.h" "${ROCKY_SRC_DIR}/src/rocky/vsg/Application.cpp" <<'PY'
+import sys
+h, cpp = sys.argv[1:3]
+s = open(h, encoding='utf-8').read()
+old = '    class RenderImGuiContext;\n'
+new = '''#ifdef ROCKY_HAS_IMGUI
+    class RenderImGuiContext;
+#else
+    using RenderImGuiContext = vsg::Node;
+#endif
+'''
+if old in s and 'using RenderImGuiContext = vsg::Node;\n#endif' not in s:
+    s = s.replace(old, new, 1)
+    open(h, 'w', encoding='utf-8').write(s)
+    print('patched Application.h for no-ImGui build')
+c = open(cpp, encoding='utf-8').read()
+old_cpp = '#ifndef ROCKY_HAS_IMGUI\nusing RenderImGuiContext = vsg::Node;\n#endif\n'
+if old_cpp in c:
+    c = c.replace(old_cpp, '', 1)
+    open(cpp, 'w', encoding='utf-8').write(c)
+    print('patched Application.cpp for no-ImGui build')
+PY
+}
+
 HTTPLIB_COMPAT_TAG=openssl111-v1
 SIG="${ROCKY_COMMIT}|${VULKAN_HEADERS_COMMIT}|${GLM_TAG}|${SPDLOG_TAG}|${NLOHMANN_JSON_TAG}|${CPP_HTTPLIB_TAG}|${ENTT_TAG}|${HTTPLIB_COMPAT_TAG}"
 STAMP="${ROCKY_WORK}/.source-ready"
@@ -27,6 +52,7 @@ if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -f "${ROCKY_DEPS_PREFIX}/lib/cmake/nlohmann_json/nlohmann_jsonConfig.cmake" \
    && -n "$ENTT_CONFIG" ]]; then
   log "复用已缓存源码与依赖"
+  patch_no_imgui
   stage_marker ROCKY_STAGE_1_SOURCE_OK PASS "${ROCKY_REPORT_DIR}/rocky-source-ok.json"
   info "ROCKY SOURCE PASS (cached)"; exit 0
 fi
@@ -53,6 +79,7 @@ fetch_tar() {
 main_sha="$(fetch_tar rocky "$ROCKY_SRC_DIR" 'pelicanmapping/rocky' "$ROCKY_COMMIT")"
 grep -q 'VERSION 1.0.2' "${ROCKY_SRC_DIR}/CMakeLists.txt" || die "Rocky 版本不符"
 grep -q 'PROJECT_VERSION_ABI 46' "${ROCKY_SRC_DIR}/CMakeLists.txt" || die "Rocky ABI 不符"
+patch_no_imgui
 
 vulkan_sha="$(fetch_tar vulkan-headers "$VULKAN_HEADERS_SRC_DIR" 'KhronosGroup/Vulkan-Headers' "$VULKAN_HEADERS_COMMIT")"
 grep -q '#define VK_HEADER_VERSION 268' "${VULKAN_HEADERS_SRC_DIR}/include/vulkan/vulkan_core.h" \
