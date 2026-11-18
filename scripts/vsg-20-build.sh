@@ -35,8 +35,8 @@ GCC_LIBDIR="$(locate_gcc_runtime || true)"
 export LD_LIBRARY_PATH="${GCC_LIBDIR}:${LOCAL_PREFIX}/lib64:${GLSLANG_PREFIX}/lib64:${DEPS_PREFIX:-}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 log "GCC11 runtime: ${GCC_LIBDIR}"
 
-GLSLANG_CONFIG="$(find "$GLSLANG_PREFIX" -path '*/cmake/glslang/glslangConfig.cmake' -print -quit 2>/dev/null || true)"
-[[ -n "$GLSLANG_CONFIG" ]] || die "未找到 glslangConfig.cmake"
+GLSLANG_CONFIG="$(find "$GLSLANG_PREFIX" -path '*/cmake/glslang/*' -name 'glslang*onfig.cmake' -print -quit 2>/dev/null || true)"
+[[ -n "$GLSLANG_CONFIG" ]] || die "未找到 glslang-config.cmake"
 GLSLANG_CMAKE_DIR="$(dirname "$GLSLANG_CONFIG")"
 
 NINJA="$(command -v ninja || true)"

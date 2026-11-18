@@ -12,8 +12,8 @@ for cmd in git curl tar python3 g++ gcc cmake ninja rpm rpmbuild rpm2cpio cpio l
 done
 pkg-config --exists xcb || die "缺少 xcb 开发包（VSG_SUPPORTS_Windowing=ON）"
 
-GLSLANG_CONFIG="$(find "$GLSLANG_PREFIX" -path '*/cmake/glslang/glslangConfig.cmake' -print -quit 2>/dev/null || true)"
-[[ -n "$GLSLANG_CONFIG" ]] || die "未找到 ${GLSLANG_PREFIX} 下的 glslangConfig.cmake"
+GLSLANG_CONFIG="$(find "$GLSLANG_PREFIX" -path '*/cmake/glslang/*' -name 'glslang*onfig.cmake' -print -quit 2>/dev/null || true)"
+[[ -n "$GLSLANG_CONFIG" ]] || die "未找到 ${GLSLANG_PREFIX} 下的 glslang-config.cmake"
 
 free="$(free_gb "$VSG_WORK")"
 [[ "$free" -ge 10 ]] || die "可用空间 ${free}GB < 10GB"
