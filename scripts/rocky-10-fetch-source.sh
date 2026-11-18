@@ -59,6 +59,9 @@ edit(ecs_path, [
     ('        add(LabelSystemNode::create(registry));\n',
      '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystemNode::create(registry));\n#endif\n',
      '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystemNode::create(registry));\n#endif'),
+    ('        add(LabelSystem::create(registry));\n',
+     '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystem::create(registry));\n#endif\n',
+     '#ifdef ROCKY_HAS_IMGUI\n        add(LabelSystem::create(registry));\n#endif'),
 ])
 
 edit(cmake_path, [(
