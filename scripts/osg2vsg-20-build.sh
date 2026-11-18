@@ -93,16 +93,23 @@ DESTDIR="$STAGE" cmake --install "$BUILD" 2>&1 | tee "${LOG}/osg2vsg-install.log
 find_libdir() { local p="$1"; [[ -d "$p/lib64" ]] && echo lib64 || echo lib; }
 OSG_LD="$(find_libdir "$OSG_PREFIX")"; VSG_LD="$(find_libdir "$VSG_PREFIX")"
 mkdir -p "${STAGE_PREFIX}/lib64/osgPlugins-3.6.5"
-for f in "${OSG_PREFIX}/${OSG_LD}"/lib*.so* "${VSG_PREFIX}/${VSG_LD}"/lib*.so*; do
+for f in "${OSG_PREFIX}/${OSG_LD}"/lib*.so* "${VSG_PREFIX}/${VSG_LD}"/lib*.so* \
+         /opt/glslang-16.1.0/lib64/lib*.so*; do
   [[ -e "$f" ]] || continue
   cp -L "$f" "${STAGE_PREFIX}/lib64/" 2>/dev/null || true
+done
+# glslang 的符号链接（libglslang.so.16 等）必须保留，VSG 运行时按 SONAME 加载
+for f in /opt/glslang-16.1.0/lib64/lib*.so.16; do
+  [[ -e "$f" ]] || continue
+  cp -a "$f" "${STAGE_PREFIX}/lib64/" 2>/dev/null || true
 done
 if [[ -d "${OSG_PREFIX}/${OSG_LD}/osgPlugins-3.6.5" ]]; then
   cp -L "${OSG_PREFIX}/${OSG_LD}/osgPlugins-3.6.5"/*.so "${STAGE_PREFIX}/lib64/osgPlugins-3.6.5/" 2>/dev/null || true
 fi
 cp -a "${OSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
 cp -a "${VSG_PREFIX}/include/." "${STAGE_PREFIX}/include/" 2>/dev/null || true
-for d in "${OSG_PREFIX}/${OSG_LD}/cmake" "${VSG_PREFIX}/${VSG_LD}/cmake"; do
+for d in "${OSG_PREFIX}/${OSG_LD}/cmake" "${VSG_PREFIX}/${VSG_LD}/cmake" \
+         /opt/glslang-16.1.0/lib64/cmake; do
   [[ -d "$d" ]] || continue
   mkdir -p "${STAGE_PREFIX}/lib64/cmake"
   cp -a "$d/." "${STAGE_PREFIX}/lib64/cmake/" || true
