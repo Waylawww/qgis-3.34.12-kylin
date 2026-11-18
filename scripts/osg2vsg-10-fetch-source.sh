@@ -43,7 +43,7 @@ o="$(fetch_tar osg "$OSG_SRC_DIR" 'openscenegraph/OpenSceneGraph' "$OSG_COMMIT")
 v="$(fetch_tar vsg "$VSG_SRC_DIR" 'vsg-dev/VulkanSceneGraph' "$VSG_COMMIT")"
 grep -q 'VERSION 0.4.0' "${OSG2VSG_SRC_DIR}/CMakeLists.txt" || die "osg2vsg 版本不符"
 grep -qi 'SET(OPENSCENEGRAPH_MAJOR_VERSION 3)' "${OSG_SRC_DIR}/CMakeLists.txt" || die "OSG 版本不符"
-grep -q 'find_package(Vulkan)' "${VSG_SRC_DIR}/CMakeLists.txt" || die "VSG 源码不完整"
+grep -q 'find_package(Vulkan' "${VSG_SRC_DIR}/CMakeLists.txt" || die "VSG 源码不完整"
 
 python3 - "${OSG2VSG_REPORT_DIR}" "${m}" "${o}" "${v}" <<'PY'
 import json, os, sys
