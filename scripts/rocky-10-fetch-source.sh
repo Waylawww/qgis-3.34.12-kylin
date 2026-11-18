@@ -8,7 +8,8 @@ source "${REPO_ROOT}/config/rocky.env"
 need_cmd curl "源码下载"; need_cmd tar "源码解压"
 log "== 阶段 1 / FETCH ROCKY ${ROCKY_VERSION} + deps =="
 
-SIG="${ROCKY_COMMIT}|${VULKAN_HEADERS_COMMIT}|${GLM_TAG}|${SPDLOG_TAG}|${NLOHMANN_JSON_TAG}|${CPP_HTTPLIB_TAG}|${ENTT_TAG}"
+HTTPLIB_COMPAT_TAG=openssl111-v1
+SIG="${ROCKY_COMMIT}|${VULKAN_HEADERS_COMMIT}|${GLM_TAG}|${SPDLOG_TAG}|${NLOHMANN_JSON_TAG}|${CPP_HTTPLIB_TAG}|${ENTT_TAG}|${HTTPLIB_COMPAT_TAG}"
 STAMP="${ROCKY_WORK}/.source-ready"
 if [[ -f "${ROCKY_DEPS_PREFIX}/lib/cmake/EnTT/EnTTConfig.cmake" ]]; then
   ENTT_CONFIG="${ROCKY_DEPS_PREFIX}/lib/cmake/EnTT/EnTTConfig.cmake"
@@ -81,6 +82,17 @@ HTTP_SRC="${ROCKY_WORK}/src/httplib-${CPP_HTTPLIB_TAG}"
 fetch_tar httplib "$HTTP_SRC" 'yhirose/cpp-httplib' "$CPP_HTTPLIB_TAG" >/dev/null
 mkdir -p "${ROCKY_DEPS_PREFIX}/include"
 cp -f "${HTTP_SRC}/httplib.h" "${ROCKY_DEPS_PREFIX}/include/"
+python3 - "${ROCKY_DEPS_PREFIX}/include/httplib.h" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding='utf-8').read()
+old = '#error Sorry, OpenSSL versions prior to 3.0.0 are not supported'
+new = '#define SSL_get1_peer_certificate SSL_get_peer_certificate'
+if old in s:
+    s = s.replace(old, new, 1)
+    open(p, 'w', encoding='utf-8').write(s)
+    print('patched cpp-httplib for OpenSSL 1.1.1 compatibility')
+PY
 
 python3 - "${ROCKY_REPORT_DIR}" "${main_sha}" "${vulkan_sha}" <<'PY'
 import json, os, sys
