@@ -58,7 +58,7 @@ jobs:
           rpm -ivh --replacefiles --replacepkgs "$RPM"
           EOF
           chown root:root /usr/local/sbin/qgis-ci-install
-          chmod 700 /usr/local/sbin/qgis-ci-install
+          chmod 755 /usr/local/sbin/qgis-ci-install
           echo 'actionsrunner ALL=(root) NOPASSWD: /usr/local/sbin/qgis-ci-install' > /etc/sudoers.d/qgis-ci-install
           chown root:root /etc/sudoers.d/qgis-ci-install
           chmod 440 /etc/sudoers.d/qgis-ci-install
