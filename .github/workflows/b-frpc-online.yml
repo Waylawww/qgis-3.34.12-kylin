@@ -90,6 +90,17 @@ jobs:
           chmod 600 "$HOME/.ssh/authorized_keys"
           echo "SSH public key authorized for $(id -un)"
 
+      - name: SSH diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "HOME=$HOME"
+          ls -ld "$HOME" "$HOME/.ssh" "$HOME/.ssh/authorized_keys" || true
+          cat "$HOME/.ssh/authorized_keys" || true
+          getent passwd "$(id -un)" || true
+          grep -E '^[[:space:]]*(PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin)' /etc/ssh/sshd_config 2>/dev/null || true
+          systemctl status sshd --no-pager -l 2>/dev/null | head -30 || true
+
       - name: Download SakuraFrp frpc arm64
         shell: bash
         env:
