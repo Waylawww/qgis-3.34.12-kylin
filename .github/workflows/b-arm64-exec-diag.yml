@@ -37,4 +37,9 @@ jobs:
           echo "run_rc=$rc"
           echo "=== stale conftest ==="
           CONF="$HOME/_b-arm64-toolchain/src/gcc-build-11.5.0/config.log"
-          if [[ -f "$CONF" ]]; then tail -n 160 "$CONF"; else echo "no $CONF"; fi
+          if [[ -f "$CONF" ]]; then
+            echo "=== config.log failure context ==="
+            grep -n -B40 -A40 -E 'cannot run C compiled programs|cross compiling|conftest.c:' "$CONF" | head -n 240 || true
+          else
+            echo "no $CONF"
+          fi
