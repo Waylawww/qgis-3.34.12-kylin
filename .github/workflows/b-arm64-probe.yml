@@ -1,0 +1,90 @@
+name: B device ARM64 · environment probe
+
+on:
+  push:
+    branches: [feat/b-arm64-probe]
+    paths:
+      - '.github/workflows/b-arm64-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b-arm64-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe Kylin ARM64 self-hosted runner
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 30
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname)"
+          echo "uname_m=$(uname -m)"
+          echo "uname_r=$(uname -r)"
+          [[ "$(uname -m)" == "aarch64" ]] || { echo "FATAL: B runner is not aarch64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "FATAL: runner must not be root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      - name: Collect toolchain and system information
+        shell: bash
+        run: |
+          set -uo pipefail
+          OUT="${GITHUB_WORKSPACE}/b-arm64-environment"
+          mkdir -p "$OUT"
+          {
+            echo "=== uname ==="; uname -a
+            echo "=== os-release ==="; cat /etc/os-release
+            echo "=== cpuinfo ==="; lscpu || true
+            echo "=== memory ==="; free -h || true
+            echo "=== disk ==="; df -h / /opt /home 2>/dev/null || true
+            echo "=== glibc ==="; ldd --version | head -n 2 || true
+            echo "=== arch bits ==="; getconf LONG_BIT || true
+          } > "$OUT/system.txt" 2>&1
+          {
+            for c in git curl tar python3 gcc g++ cmake ninja make pkg-config rpm rpmbuild rpm2cpio cpio ldd readelf objdump patchelf; do
+              printf '%-12s ' "$c"
+              command -v "$c" || echo MISSING
+            done
+            echo "=== versions ==="
+            python3 --version 2>&1 || true
+            gcc --version | head -n 1 2>&1 || true
+            g++ --version | head -n 1 2>&1 || true
+            cmake --version | head -n 1 2>&1 || true
+            ninja --version 2>&1 || true
+            rpm --version 2>&1 || true
+            rpmbuild --version 2>&1 || true
+          } > "$OUT/tools.txt" 2>&1
+          {
+            echo "=== existing prefixes ==="
+            for p in /opt/qgis-3.34.12 /opt/assimp-6.0.5 /opt/glslang-16.1.0 /opt/osg2vsg-0.4.0 /opt/rocky-1.0.2 /opt/vsg-1.1.13 /opt/vsgxchange-1.1.9; do
+              if [[ -d "$p" ]]; then echo "EXISTS $p"; find "$p" -maxdepth 3 \( -name '*.so*' -o -name '*Config.cmake' -o -name '*config.cmake' \) 2>/dev/null | head -n 20; else echo "MISSING $p"; fi
+            done
+            echo "=== system libs aarch64 ==="
+            ls -l /usr/lib64/libvulkan.so* /usr/lib/aarch64-linux-gnu/libvulkan.so* 2>/dev/null || true
+            ls -l /usr/lib64/libstdc++.so* /usr/lib/aarch64-linux-gnu/libstdc++.so* 2>/dev/null || true
+            echo "=== pkg-config ==="
+            pkg-config --modversion xcb 2>&1 || true
+            pkg-config --modversion vulkan 2>&1 || true
+            pkg-config --modversion gdal 2>&1 || true
+            pkg-config --modversion proj 2>&1 || true
+          } > "$OUT/deps.txt" 2>&1
+          echo "B_ARM64_ENV_DIR=$OUT" >> "$GITHUB_ENV"
+          cat "$OUT/system.txt"
+          cat "$OUT/tools.txt"
+          cat "$OUT/deps.txt"
+
+      - name: Upload probe result
+        uses: actions/upload-artifact@v4
+        with:
+          name: b-arm64-environment-${{ github.run_number }}
+          path: ${{ github.workspace }}/b-arm64-environment/
+          if-no-files-found: error
+          retention-days: 30
