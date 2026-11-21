@@ -47,16 +47,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cat > /tmp/frp-inspect-sshd.sh <<'SCRIPT'
           echo '--- sshd_config ---'
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' grep -R -nE 'PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin|Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
+          grep -R -nE 'PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin|Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
           echo '--- secure log ---'
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' tail -100 /var/log/secure 2>/dev/null || true
+          tail -100 /var/log/secure 2>/dev/null || true
+          SCRIPT
+          chmod 644 /tmp/frp-inspect-sshd.sh
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-inspect-sshd.sh'
 
       - name: Fix sshd pubkey auth
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' bash -s <<'ROOTEOF'
+          cat > /tmp/frp-fix-sshd.sh <<'SCRIPT'
           set -e
           cfg=/etc/ssh/sshd_config
           cp -n "$cfg" "${cfg}.b-frp-bak"
@@ -66,21 +70,28 @@ jobs:
           grep -q '^AuthorizedKeysFile .ssh/authorized_keys' "$cfg" || printf '%s\n' 'AuthorizedKeysFile .ssh/authorized_keys' >> "$cfg"
           sshd -t
           systemctl reload sshd
-          ROOTEOF
+          SCRIPT
+          chmod 644 /tmp/frp-fix-sshd.sh
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-fix-sshd.sh'
           echo "sshd pubkey auth fixed and reloaded"
 
       - name: Install OpenGL deps
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' yum install -y mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' rpm -q mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
+          cat > /tmp/frp-install-deps.sh <<'SCRIPT'
+          set -e
+          yum install -y mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
+          rpm -q mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
+          SCRIPT
+          chmod 644 /tmp/frp-install-deps.sh
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-install-deps.sh'
 
       - name: Install frpc systemd service
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' bash -s <<'ROOTEOF'
+          cat > /tmp/frp-install-service.sh <<'SCRIPT'
           set -e
           pkill -f '/home/actionsrunner/sakura-frpc/frpc' 2>/dev/null || true
           install -m 0755 /home/actionsrunner/sakura-frpc/frpc /usr/local/bin/sakura-frpc
@@ -106,5 +117,7 @@ jobs:
           systemctl daemon-reload
           systemctl enable --now sakura-frpc
           systemctl status sakura-frpc --no-pager -l || true
-          ROOTEOF
+          SCRIPT
+          chmod 644 /tmp/frp-install-service.sh
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-install-service.sh'
           echo "frpc systemd service installed"
