@@ -66,8 +66,14 @@ jobs:
           set -euo pipefail
           D="${GITHUB_WORKSPACE}/qgis-b-arm64-repo"
           rm -rf "$D"
-          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
-            "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$D"
+          for i in 1 2 3 4 5; do
+            if git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+                 "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$D"; then break; fi
+            echo "git clone failed ($i/5), retry..."
+            rm -rf "$D"
+            sleep $((i * 5))
+          done
+          [[ -d "$D/.git" ]] || { echo "FATAL: git clone failed after retries"; exit 1; }
           echo "REPO_ROOT=$D" >> "$GITHUB_ENV"
           git -C "$D" --no-pager log -1 --oneline
 
