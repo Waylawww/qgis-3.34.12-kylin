@@ -88,11 +88,19 @@ jobs:
           [[ -f "$GCC_INCLUDE_DIR/stddef.h" ]] || { echo "FATAL: host gcc include missing stddef.h: $GCC_INCLUDE_DIR"; exit 1; }
           export CFLAGS="${CFLAGS:+$CFLAGS }-I$GCC_INCLUDE_DIR"
           export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-I$GCC_INCLUDE_DIR"
+          export CC_FOR_BUILD=/usr/bin/gcc
+          export CXX_FOR_BUILD=/usr/bin/g++
+          export CPP_FOR_BUILD=/usr/bin/cpp
+          export BUILD_CC=/usr/bin/gcc
+          export BUILD_CXX=/usr/bin/g++
+          export BUILD_CPP=/usr/bin/cpp
+          export MAKEINFO=true
           ../gcc-11.5.0/configure \
             --build=aarch64-linux-gnu --host=aarch64-linux-gnu --target=aarch64-linux-gnu \
             --prefix="$GCC_ROOT" \
             --enable-languages=c,c++ \
             --disable-multilib \
+            --disable-nls \
             --disable-bootstrap \
             --enable-checking=release \
             2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-configure.log"
