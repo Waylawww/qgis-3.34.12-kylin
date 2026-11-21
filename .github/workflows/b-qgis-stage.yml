@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STAGE: qgis
+  STAGE: install
   SOURCE_BRANCH: ops/frp-tunnel
   QGIS_BUILD_JOBS: '6'
   FORCE_REBUILD_DEPS: 'false'
