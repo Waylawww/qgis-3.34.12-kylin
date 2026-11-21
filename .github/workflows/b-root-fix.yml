@@ -52,6 +52,12 @@ jobs:
           grep -R -nE 'PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin|Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
           echo '--- secure log ---'
           tail -100 /var/log/secure 2>/dev/null || true
+          echo '--- sshd effective config ---'
+          sshd -T -u actionsrunner 2>/dev/null | grep -E '^(pubkeyauthentication|authorizedkeysfile|passwordauthentication|permitrootlogin|usepam) ' || true
+          echo '--- key context ---'
+          ls -lZ /home/actionsrunner/.ssh /home/actionsrunner/.ssh/authorized_keys 2>/dev/null || true
+          echo '--- journal sshd ---'
+          journalctl -u sshd --since '15 minutes ago' --no-pager 2>/dev/null | tail -80 || true
           SCRIPT
           chmod 644 /tmp/frp-inspect-sshd.sh
           printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-inspect-sshd.sh'
