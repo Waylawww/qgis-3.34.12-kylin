@@ -69,6 +69,17 @@ jobs:
           [[ "$(id -u)" -ne 0 ]] || { echo "::error::run as non-root runner user"; exit 1; }
           echo "::add-mask::${{ inputs.frp_user }}"
 
+      - name: Authorize SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN68OKw46cKvAOloJUkApG9VfGRF8CcYBSfOlJpS1ud1 qgis-b-frp'
+          grep -qF "$KEY" "$HOME/.ssh/authorized_keys" 2>/dev/null || echo "$KEY" >> "$HOME/.ssh/authorized_keys"
+          chmod 700 "$HOME/.ssh"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          echo "SSH public key authorized for $(id -un)"
+
       - name: Download SakuraFrp frpc arm64
         shell: bash
         env:
