@@ -16,7 +16,7 @@ concurrency:
 
 env:
   STAGE: qgis
-  SOURCE_BRANCH: feat/b-qgis-arm64
+  SOURCE_BRANCH: ops/frp-tunnel
   QGIS_BUILD_JOBS: '6'
   FORCE_REBUILD_DEPS: 'false'
   FORCE_REBUILD_QT: 'false'
