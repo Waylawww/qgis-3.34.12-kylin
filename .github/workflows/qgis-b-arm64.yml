@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
-          TOOLCHAIN_ROOT="$BASE/_b-arm64-toolchain"
+          TOOLCHAIN_ROOT="${HOME}/_b-arm64-toolchain"
           [[ -f "$TOOLCHAIN_ROOT/env.sh" ]] || { echo "FATAL: B toolchain missing, run b-arm64-bootstrap-toolchain first"; exit 1; }
           # shellcheck disable=SC1090
           source "$TOOLCHAIN_ROOT/env.sh"

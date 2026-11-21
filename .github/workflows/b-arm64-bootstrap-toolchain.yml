@@ -35,10 +35,13 @@ jobs:
           [[ "$(uname -m)" == "aarch64" ]] || { echo "FATAL: not aarch64"; exit 1; }
           [[ "$(id -u)" -ne 0 ]] || { echo "FATAL: runner must not be root"; exit 1; }
           BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
-          TOOLCHAIN_ROOT="$BASE/_b-arm64-toolchain"
+          TOOLCHAIN_ROOT="${HOME}/_b-arm64-toolchain"
           GCC_ROOT="$TOOLCHAIN_ROOT/gcc-11.5.0"
           CMAKE_ROOT="$TOOLCHAIN_ROOT/cmake-3.31.6"
           mkdir -p "$TOOLCHAIN_ROOT/src" "$TOOLCHAIN_ROOT/logs"
+          printf '#!/bin/sh\necho exec-ok\n' > "$TOOLCHAIN_ROOT/.exec-test"
+          chmod 700 "$TOOLCHAIN_ROOT/.exec-test"
+          "$TOOLCHAIN_ROOT/.exec-test" >/dev/null || { echo "FATAL: ${TOOLCHAIN_ROOT} is noexec"; exit 1; }
           if [[ -x "$GCC_ROOT/bin/g++" ]] && "$GCC_ROOT/bin/g++" --version | grep -q ' 11\.' \
              && strings "$GCC_ROOT/lib64/libstdc++.so.6" 2>/dev/null | grep -q GLIBCXX_3.4.29 \
              && [[ -x "$CMAKE_ROOT/bin/cmake" ]]; then
