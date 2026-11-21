@@ -1,40 +1,46 @@
-name: B device · frpc online (self-hosted runner)
+name: B device 路 frpc online (SakuraFrp / self-hosted runner)
 
 on:
   workflow_dispatch:
     inputs:
-      frp_server_addr:
-        description: 'FRP 服务端地址（frpc 连接用，不是面板地址）'
+      frp_user:
+        description: 'SakuraFrp 璁块棶瀵嗛挜'
         required: true
+        type: string
+      frp_server_addr:
+        description: 'server_addr'
+        required: true
+        default: 'frp-any.com'
         type: string
       frp_server_port:
-        description: 'FRP 服务端端口'
+        description: 'server_port'
         required: true
-        default: '7000'
+        default: '8088'
         type: string
-      frp_auth_user:
-        description: 'frpc auth.user'
-        required: false
-        default: 'wxy_1031'
-        type: string
-      frp_auth_token:
-        description: 'frpc auth.token（不是面板密码；从 FRP 面板/服务商获取）'
+      tunnel_name:
+        description: '闅ч亾娈靛悕'
         required: true
+        default: 'win_ssh'
         type: string
-      ssh_remote_port:
-        description: '映射到 B 设备 22 端口的远程端口'
+      tunnel_id:
+        description: '闅ч亾 ID'
         required: true
-        default: '60022'
+        default: '29903960'
+        type: string
+      remote_port:
+        description: '杩滅▼绔彛'
+        required: true
+        default: '55995'
+        type: string
+      frpc_url:
+        description: 'frpc linux arm64 涓嬭浇鍦板潃'
+        required: true
+        default: 'https://nya.globalslb.net/natfrp/client/frpc/0.51.0-sakura-15.1/frpc_linux_arm64'
         type: string
       ssh_user:
-        description: 'B 设备 SSH 用户名'
+        description: 'B 璁惧 SSH 鐢ㄦ埛鍚?
         required: true
         default: 'actionsrunner'
-        type: string
-      frp_version:
-        description: 'frp 版本（需与服务端兼容）'
-        required: true
-        default: '0.60.0'
         type: string
 
 permissions:
@@ -56,51 +62,53 @@ jobs:
           echo "runner=${RUNNER_NAME:-unknown} user=$(id -un) arch=$(uname -m)"
           [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::need aarch64 runner"; exit 1; }
           [[ "$(id -u)" -ne 0 ]] || { echo "::error::run as non-root runner user"; exit 1; }
-          echo "::add-mask::${{ inputs.frp_auth_token }}"
+          echo "::add-mask::${{ inputs.frp_user }}"
 
-      - name: Download frp arm64
+      - name: Download SakuraFrp frpc arm64
         shell: bash
         env:
-          FRP_VERSION: ${{ inputs.frp_version }}
+          FRPC_URL: ${{ inputs.frpc_url }}
         run: |
           set -euo pipefail
-          D="$RUNNER_TEMP/frp-$FRP_VERSION"
+          D="$RUNNER_TEMP/sakura-frpc"
           rm -rf "$D"
           mkdir -p "$D"
-          base="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_arm64.tar.gz"
           ok=0
-          for u in "$base" "https://ghproxy.net/$base"; do
-            if curl -fsSL --retry 4 --connect-timeout 20 "$u" -o "$D/frp.tgz"; then ok=1; break; fi
+          for u in "$FRPC_URL" "https://ghproxy.net/$FRPC_URL"; do
+            if curl -fsSL --retry 4 --connect-timeout 20 "$u" -o "$D/frpc"; then ok=1; break; fi
           done
-          [[ $ok -eq 1 ]] || { echo "::error::download frp failed"; exit 1; }
-          tar -xzf "$D/frp.tgz" -C "$D"
-          src="$D/frp_${FRP_VERSION}_linux_arm64"
-          [[ -x "$src/frpc" ]] || { echo "::error::frpc not found"; find "$D" -maxdepth 2 -type f | head -50; exit 1; }
-          echo "FRPC_SRC=$src/frpc" >> "$GITHUB_ENV"
+          [[ $ok -eq 1 ]] || { echo "::error::download frpc failed"; exit 1; }
+          chmod +x "$D/frpc"
+          file "$D/frpc" || true
+          echo "FRPC_SRC=$D/frpc" >> "$GITHUB_ENV"
 
       - name: Configure frpc
         shell: bash
         env:
+          FRP_USER: ${{ inputs.frp_user }}
           SERVER_ADDR: ${{ inputs.frp_server_addr }}
           SERVER_PORT: ${{ inputs.frp_server_port }}
-          AUTH_USER: ${{ inputs.frp_auth_user }}
-          AUTH_TOKEN: ${{ inputs.frp_auth_token }}
-          REMOTE_PORT: ${{ inputs.ssh_remote_port }}
+          TUNNEL_NAME: ${{ inputs.tunnel_name }}
+          TUNNEL_ID: ${{ inputs.tunnel_id }}
+          REMOTE_PORT: ${{ inputs.remote_port }}
         run: |
           set -euo pipefail
-          INSTALL_DIR="$HOME/frp-b"
+          INSTALL_DIR="$HOME/sakura-frpc"
           mkdir -p "$INSTALL_DIR"
           cp "$FRPC_SRC" "$INSTALL_DIR/frpc"
           chmod +x "$INSTALL_DIR/frpc"
           cat > "$INSTALL_DIR/frpc.ini" <<EOF
           [common]
+          user = $FRP_USER
+
+          sakura_mode = true
+          login_fail_exit = false
+
           server_addr = $SERVER_ADDR
           server_port = $SERVER_PORT
-          auth.method = token
-          auth.user = $AUTH_USER
-          auth.token = $AUTH_TOKEN
 
-          [qgis-b-ssh]
+          [$TUNNEL_NAME]
+          # id = $TUNNEL_ID
           type = tcp
           local_ip = 127.0.0.1
           local_port = 22
@@ -108,12 +116,12 @@ jobs:
           EOF
           chmod 600 "$INSTALL_DIR/frpc.ini"
           echo "FRP_INSTALL_DIR=$INSTALL_DIR" >> "$GITHUB_ENV"
-          echo "配置已写入 $INSTALL_DIR/frpc.ini（token 已 mask）"
+          echo "閰嶇疆宸插啓鍏?$INSTALL_DIR/frpc.ini锛堣闂瘑閽ュ凡 mask锛?
 
       - name: Start frpc persistently
         shell: bash
         env:
-          REMOTE_PORT: ${{ inputs.ssh_remote_port }}
+          REMOTE_PORT: ${{ inputs.remote_port }}
           SSH_USER: ${{ inputs.ssh_user }}
           SERVER_ADDR: ${{ inputs.frp_server_addr }}
         run: |
@@ -121,19 +129,19 @@ jobs:
           cd "$FRP_INSTALL_DIR"
           if sudo -n true 2>/dev/null; then
             echo "Using systemd (passwordless sudo available)"
-            sudo install -m 0755 frpc /usr/local/bin/frpc-b
-            sudo mkdir -p /etc/frp-b
-            sudo cp frpc.ini /etc/frp-b/frpc.ini
-            sudo chmod 600 /etc/frp-b/frpc.ini
-            sudo tee /etc/systemd/system/frpc-b.service >/dev/null <<'EOF'
+            sudo install -m 0755 frpc /usr/local/bin/sakura-frpc
+            sudo mkdir -p /etc/sakura-frpc
+            sudo cp frpc.ini /etc/sakura-frpc/frpc.ini
+            sudo chmod 600 /etc/sakura-frpc/frpc.ini
+            sudo tee /etc/systemd/system/sakura-frpc.service >/dev/null <<'EOF'
           [Unit]
-          Description=frp client for B device SSH
+          Description=SakuraFrp client for B device SSH
           After=network-online.target
           Wants=network-online.target
 
           [Service]
           Type=simple
-          ExecStart=/usr/local/bin/frpc-b -c /etc/frp-b/frpc.ini
+          ExecStart=/usr/local/bin/sakura-frpc -c /etc/sakura-frpc/frpc.ini
           Restart=always
           RestartSec=10
           LimitNOFILE=65535
@@ -142,11 +150,11 @@ jobs:
           WantedBy=multi-user.target
           EOF
             sudo systemctl daemon-reload
-            sudo systemctl enable --now frpc-b
+            sudo systemctl enable --now sakura-frpc
             sleep 5
-            sudo systemctl status frpc-b --no-pager -l || true
+            sudo systemctl status sakura-frpc --no-pager -l || true
           else
-            echo "No passwordless sudo; starting detached process (may stop when job ends)"
+            echo "No passwordless sudo; starting detached process"
             pkill -f "$FRP_INSTALL_DIR/frpc" 2>/dev/null || true
             setsid nohup "$FRP_INSTALL_DIR/frpc" -c "$FRP_INSTALL_DIR/frpc.ini" > "$FRP_INSTALL_DIR/frpc.log" 2>&1 < /dev/null &
             echo $! > "$FRP_INSTALL_DIR/frpc.pid"
@@ -159,6 +167,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frpc-b-log
+          name: sakura-frpc-b-log
           path: ${{ env.FRP_INSTALL_DIR }}/frpc.log
           if-no-files-found: ignore
