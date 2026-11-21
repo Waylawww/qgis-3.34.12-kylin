@@ -68,6 +68,8 @@ jobs:
           grep -q '^PubkeyAuthentication yes' "$cfg" || printf '%s\n' 'PubkeyAuthentication yes' >> "$cfg"
           sed -i -E 's|^[[:space:]]*AuthorizedKeysFile[[:space:]].*|AuthorizedKeysFile .ssh/authorized_keys|' "$cfg"
           grep -q '^AuthorizedKeysFile .ssh/authorized_keys' "$cfg" || printf '%s\n' 'AuthorizedKeysFile .ssh/authorized_keys' >> "$cfg"
+          faillock --user actionsrunner --reset 2>/dev/null || true
+          pam_tally2 --user actionsrunner --reset 2>/dev/null || true
           sshd -t
           systemctl reload sshd
           SCRIPT
