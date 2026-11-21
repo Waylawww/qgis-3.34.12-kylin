@@ -575,6 +575,8 @@ dep_qt() {
   # option 'xcb'"）。-no-gtk / -no-glib / -no-cups / -no-pulseaudio / -no-alsa
   # 也不在 5.15.2 的合法选项表里，缺库的模块 configure 会自动禁用。
   # 保留经 configure.json 确认合法的 enum(-qt-*/system-*) 与 boolean 开关。
+  OPENGL_OPTS=()
+  if [[ "${WITH_3D:-ON}" != "ON" ]]; then OPENGL_OPTS+=(-no-opengl); fi
   if ! "$SRC/qt/configure" -opensource -confirm-license -release -shared \
     -prefix "$DEPS_PREFIX" \
     -nomake examples -nomake tests \
@@ -588,6 +590,7 @@ dep_qt() {
     -qt-libpng -qt-libjpeg -qt-zlib \
     -system-freetype -fontconfig -openssl -no-icu \
     -xcb \
+    "${OPENGL_OPTS[@]}" \
     -no-eglfs -no-directfb -no-linuxfb -no-kms \
     -no-compile-examples; then
     warn "  Qt configure 失败，config.log 尾部:"

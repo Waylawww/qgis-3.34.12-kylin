@@ -42,7 +42,11 @@ for f in "${RPMS[@]}"; do
 done
 
 # --- 3. 强制交付项 -----------------------------------------------------------
-test -n "$(find "${ROOT}" -name 'libqgis_3d.so.*' -print -quit)" || die "RPM 中缺少 libqgis_3d.so.*（3D 未启用）"
+if [[ "${WITH_3D:-ON}" == "ON" ]]; then
+  test -n "$(find "${ROOT}" -name 'libqgis_3d.so.*' -print -quit)" || die "RPM 中缺少 libqgis_3d.so.*（3D 未启用）"
+else
+  log "  WITH_3D=OFF：跳过 libqgis_3d 随包门禁"
+fi
 if [[ "${WITH_BINDINGS:-ON}" == "ON" ]]; then
   test -n "$(find "${ROOT}" -path '*/qgis/core/__init__.py' -print -quit)" || die "RPM 中缺少 PyQGIS"
 else
