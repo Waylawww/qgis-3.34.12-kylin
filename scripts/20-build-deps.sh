@@ -460,7 +460,14 @@ fi
 
 # --- D1..Dn: 各依赖 -------------------------------------------------------
 dep_geos() {
-  fetch_source GEOS "$GEOS_TARBALL" "$SRC/geos" CMakeLists.txt || return 1
+  if ! fetch_source GEOS "$GEOS_TARBALL" "$SRC/geos" CMakeLists.txt; then
+    warn "  GEOS 归档下载失败，改用 git clone（ghproxy）"
+    rm -rf "$SRC/geos"
+    git clone --depth=1 --branch 3.10.3 \
+      https://ghproxy.net/https://github.com/libgeos/geos.git "$SRC/geos" || return 1
+    [[ -f "$SRC/geos/CMakeLists.txt" ]] || return 1
+    touch "$SRC/geos/.unpack-ok"
+  fi
   cmake_install geos "$SRC/geos" -DBUILD_GEOSOP:BOOL=OFF || return 1
   installed_lib libgeos_c.so || [[ -x "$DEPS_PREFIX/bin/geos-config" ]]
 }
