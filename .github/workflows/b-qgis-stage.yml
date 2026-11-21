@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STAGE: deps
+  STAGE: qgis
   SOURCE_BRANCH: feat/b-qgis-arm64
   QGIS_BUILD_JOBS: '6'
   FORCE_REBUILD_DEPS: 'false'
