@@ -377,7 +377,11 @@ ninja -C "$QGIS_BUILD" -j"$JOBS" 2>&1 | tee "${LOG}/qgis-build.log"
 # 于是 ninja 全量编译不会生成这些文件，ninja install 直接报：
 #   file INSTALL cannot find ".../qgis-build/python/plugins/db_manager/resources_rc.py"
 # 这里不改 CMAKE_ARGS（否则 .cfg-sig 变化要重编全量），安装前显式补构建一次。
-ninja -C "$QGIS_BUILD" -j"$JOBS" staged-plugins 2>&1 | tee "${LOG}/qgis-staged-plugins.log"
+if [[ "${WITH_BINDINGS:-ON}" == "ON" ]]; then
+  ninja -C "$QGIS_BUILD" -j"$JOBS" staged-plugins 2>&1 | tee "${LOG}/qgis-staged-plugins.log"
+else
+  log "WITH_BINDINGS=OFF：跳过 staged-plugins（Python 插件未构建）"
+fi
 
 rm -rf "$STAGE"; mkdir -p "$STAGE"
 DESTDIR="$STAGE" ninja -C "$QGIS_BUILD" install 2>&1 | tee "${LOG}/qgis-install.log"
