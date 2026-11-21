@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "$ROOT_PASS" | sudo -S -p '' true
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' true
           echo "sudo ok"
 
       - name: Inspect sshd
@@ -48,15 +48,15 @@ jobs:
         run: |
           set -euo pipefail
           echo '--- sshd_config ---'
-          echo "$ROOT_PASS" | sudo -S -p '' grep -R -nE 'PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin|Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' grep -R -nE 'PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin|Match' /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null || true
           echo '--- secure log ---'
-          echo "$ROOT_PASS" | sudo -S -p '' tail -100 /var/log/secure 2>/dev/null || true
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' tail -100 /var/log/secure 2>/dev/null || true
 
       - name: Fix sshd pubkey auth
         shell: bash
         run: |
           set -euo pipefail
-          echo "$ROOT_PASS" | sudo -S -p '' bash -s <<'ROOTEOF'
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' bash -s <<'ROOTEOF'
           set -e
           cfg=/etc/ssh/sshd_config
           cp -n "$cfg" "${cfg}.b-frp-bak"
@@ -73,14 +73,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "$ROOT_PASS" | sudo -S -p '' yum install -y mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
-          echo "$ROOT_PASS" | sudo -S -p '' rpm -q mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' yum install -y mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' rpm -q mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel
 
       - name: Install frpc systemd service
         shell: bash
         run: |
           set -euo pipefail
-          echo "$ROOT_PASS" | sudo -S -p '' bash -s <<'ROOTEOF'
+          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' bash -s <<'ROOTEOF'
           set -e
           pkill -f '/home/actionsrunner/sakura-frpc/frpc' 2>/dev/null || true
           install -m 0755 /home/actionsrunner/sakura-frpc/frpc /usr/local/bin/sakura-frpc
