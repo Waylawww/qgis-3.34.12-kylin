@@ -1,0 +1,56 @@
+name: B device ARM64 · package availability probe
+
+on:
+  push:
+    branches: [feat/b-arm64-probe]
+    paths:
+      - '.github/workflows/b-arm64-yum-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b-arm64-yum-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe yum/dnf package availability on B
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 30
+    steps:
+      - name: Package manager and repositories
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "user=$(id -un) arch=$(uname -m)"
+          command -v yum || true
+          command -v dnf || true
+          echo "=== repolist ==="
+          yum repolist 2>&1 || dnf repolist 2>&1 || true
+
+      - name: Installed build packages
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "=== installed ==="
+          rpm -qa 2>/dev/null | grep -Ei '^(gcc|gcc-c\+\+|cmake|ninja|make|rpm-build|vulkan|mesa|gdal|proj|sqlite|openssl|libcurl|freetype|zlib|xcb|python3)' | sort || true
+
+      - name: Available build packages
+        shell: bash
+        run: |
+          set -uo pipefail
+          PATTERNS=(
+            'gcc' 'gcc-c++' 'gcc-g++' 'cmake' 'ninja-build' 'make' 'rpm-build'
+            'vulkan-headers' 'vulkan-loader' 'vulkan-loader-devel' 'vulkan-devel'
+            'mesa-vulkan-drivers' 'libxcb-devel' 'xcb-util-devel'
+            'gdal-devel' 'proj-devel' 'sqlite-devel' 'openssl-devel'
+            'libcurl-devel' 'freetype-devel' 'zlib-devel'
+            'libjpeg-devel' 'libpng-devel' 'libtiff-devel' 'expat-devel'
+            'python3-devel' 'python3-pip'
+          )
+          for p in "${PATTERNS[@]}"; do
+            echo "=== $p ==="
+            yum list available "$p" 2>&1 | tail -n +5 | head -n 20 || true
+          done
