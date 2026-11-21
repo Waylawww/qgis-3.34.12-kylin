@@ -81,9 +81,15 @@ jobs:
           cd gcc-11.5.0
           ./contrib/download_prerequisites 2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-prerequisites.log"
           cd "$TOOLCHAIN_ROOT/src"
+          rm -rf gcc-build-11.5.0
           mkdir -p gcc-build-11.5.0
           cd gcc-build-11.5.0
+          GCC_INCLUDE_DIR="$(gcc -print-file-name=include)"
+          [[ -f "$GCC_INCLUDE_DIR/stddef.h" ]] || { echo "FATAL: host gcc include missing stddef.h: $GCC_INCLUDE_DIR"; exit 1; }
+          export CFLAGS="${CFLAGS:+$CFLAGS }-I$GCC_INCLUDE_DIR"
+          export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-I$GCC_INCLUDE_DIR"
           ../gcc-11.5.0/configure \
+            --build=aarch64-linux-gnu --host=aarch64-linux-gnu --target=aarch64-linux-gnu \
             --prefix="$GCC_ROOT" \
             --enable-languages=c,c++ \
             --disable-multilib \
