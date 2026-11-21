@@ -26,7 +26,7 @@ def is_elf(path):
             head = f.read(20)
     except OSError:
         return False
-    return len(head) >= 20 and head[:4] == b"\x7fELF" and head[18:20] == b"\x3e\x00"
+    return len(head) >= 20 and head[:4] == b"\x7fELF" and head[4] == 2 and head[5] == 1
 
 
 def dynstr_span(data):
