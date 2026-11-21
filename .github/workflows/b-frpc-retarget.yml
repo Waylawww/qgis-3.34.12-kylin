@@ -1,0 +1,77 @@
+name: B device · retarget frpc to new tunnel
+
+on:
+  push:
+    branches: [ops/frp-tunnel]
+    paths:
+      - 'ops/frpc-retarget-trigger.txt'
+  workflow_dispatch:
+    inputs:
+      root_pass:
+        description: 'B 设备 root 密码'
+        required: true
+        default: 'Kylin123'
+        type: string
+
+env:
+  ROOT_PASS: ${{ inputs.root_pass || 'Kylin123' }}
+  FRP_USER: 3mquuezbfy0wdbforb8h4efh0o5cvxd1
+  TUNNEL_NAME: qgis_b_ssh
+  TUNNEL_ID: '29923552'
+  REMOTE_PORT: '20088'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b-frpc-retarget
+  cancel-in-progress: false
+
+jobs:
+  retarget:
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 20
+    steps:
+      - name: Guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner=${RUNNER_NAME:-unknown} user=$(id -un) arch=$(uname -m)"
+          [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::need aarch64"; exit 1; }
+          echo "::add-mask::$ROOT_PASS"
+          echo "::add-mask::$FRP_USER"
+
+      - name: Retarget frpc config
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/frp-retarget.sh <<'SCRIPT'
+          set -e
+          cat > /etc/sakura-frpc/frpc.ini <<'EOF'
+          [common]
+          user = 3mquuezbfy0wdbforb8h4efh0o5cvxd1
+
+          sakura_mode = true
+          login_fail_exit = false
+
+          server_addr = frp-any.com
+          server_port = 8088
+
+          [qgis_b_ssh]
+          # id = 29923552
+          type = tcp
+          local_ip = 127.0.0.1
+          local_port = 22
+          remote_port = 20088
+          EOF
+          chmod 600 /etc/sakura-frpc/frpc.ini
+          cp /etc/sakura-frpc/frpc.ini /home/actionsrunner/sakura-frpc/frpc.ini
+          chown actionsrunner:actionsrunner /home/actionsrunner/sakura-frpc/frpc.ini
+          systemctl restart sakura-frpc
+          sleep 5
+          systemctl status sakura-frpc --no-pager -l || true
+          echo '--- frpc journal ---'
+          journalctl -u sakura-frpc --since '3 minutes ago' --no-pager 2>/dev/null | tail -50 || true
+          SCRIPT
+          chmod 644 /tmp/frp-retarget.sh
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-retarget.sh'
