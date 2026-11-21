@@ -23,9 +23,9 @@ jobs:
           D="$HOME/_b-exec-diag"
           mkdir -p "$D"; cd "$D"
           cat > hello.c <<'EOF'
-#include <stdio.h>
-int main(void){ printf("hello from aarch64\n"); return 0; }
-EOF
+          #include <stdio.h>
+          int main(void){ printf("hello from aarch64\n"); return 0; }
+          EOF
           gcc -v hello.c -o hello 2>&1 | tail -n 30
           echo "=== file ==="; file hello
           echo "=== ldd ==="; ldd hello || true
