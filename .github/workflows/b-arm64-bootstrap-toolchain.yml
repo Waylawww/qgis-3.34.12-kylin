@@ -1,0 +1,155 @@
+name: B device ARM64 · bootstrap GCC11 + CMake
+
+on:
+  push:
+    branches: [feat/b-arm64-probe]
+    paths:
+      - '.github/workflows/b-arm64-bootstrap-toolchain.yml'
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'bootstrap parallel jobs'
+        default: '4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: b-arm64-bootstrap-toolchain
+  cancel-in-progress: false
+
+env:
+  BOOTSTRAP_JOBS: ${{ github.event.inputs.jobs || '4' }}
+
+jobs:
+  bootstrap:
+    name: Bootstrap GCC11 + CMake on ARM64 B device
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 720
+    steps:
+      - name: Guard and prepare persistent toolchain root
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner=${RUNNER_NAME:-unknown} user=$(id -un) uid=$(id -u) arch=$(uname -m)"
+          [[ "$(uname -m)" == "aarch64" ]] || { echo "FATAL: not aarch64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "FATAL: runner must not be root"; exit 1; }
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          TOOLCHAIN_ROOT="$BASE/_b-arm64-toolchain"
+          GCC_ROOT="$TOOLCHAIN_ROOT/gcc-11.5.0"
+          CMAKE_ROOT="$TOOLCHAIN_ROOT/cmake-3.31.6"
+          mkdir -p "$TOOLCHAIN_ROOT/src" "$TOOLCHAIN_ROOT/logs"
+          if [[ -x "$GCC_ROOT/bin/g++" ]] && "$GCC_ROOT/bin/g++" --version | grep -q ' 11\.' \
+             && strings "$GCC_ROOT/lib64/libstdc++.so.6" 2>/dev/null | grep -q GLIBCXX_3.4.29 \
+             && [[ -x "$CMAKE_ROOT/bin/cmake" ]]; then
+            echo "TOOLCHAIN_READY=1" >> "$GITHUB_ENV"
+          else
+            echo "TOOLCHAIN_READY=0" >> "$GITHUB_ENV"
+          fi
+          {
+            echo "BASE=$BASE"
+            echo "TOOLCHAIN_ROOT=$TOOLCHAIN_ROOT"
+            echo "GCC_ROOT=$GCC_ROOT"
+            echo "CMAKE_ROOT=$CMAKE_ROOT"
+          } >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_ROOT=$TOOLCHAIN_ROOT GCC_ROOT=$GCC_ROOT CMAKE_ROOT=$CMAKE_ROOT"
+
+      - name: Bootstrap GCC 11.5.0 from source
+        if: env.TOOLCHAIN_READY != '1'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$TOOLCHAIN_ROOT/src"
+          tarball="gcc-11.5.0.tar.gz"
+          if [[ ! -f "$tarball" ]]; then
+            for url in \
+              "https://ghproxy.net/https://ftp.gnu.org/gnu/gcc/gcc-11.5.0/gcc-11.5.0.tar.gz" \
+              "https://ftp.gnu.org/gnu/gcc/gcc-11.5.0/gcc-11.5.0.tar.gz" \
+              "https://mirrors.aliyun.com/gnu/gcc/gcc-11.5.0/gcc-11.5.0.tar.gz"; do
+              echo "GCC download: $url"
+              if curl -fL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 3600 -o "$tarball" "$url" \
+                 && tar -tzf "$tarball" >/dev/null 2>&1; then break; fi
+              rm -f "$tarball"
+            done
+          fi
+          [[ -f "$tarball" ]] || { echo "FATAL: gcc source download failed"; exit 1; }
+          rm -rf gcc-11.5.0 gcc-build-11.5.0
+          tar -xzf "$tarball"
+          cd gcc-11.5.0
+          ./contrib/download_prerequisites 2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-prerequisites.log"
+          cd "$TOOLCHAIN_ROOT/src"
+          mkdir -p gcc-build-11.5.0
+          cd gcc-build-11.5.0
+          ../gcc-11.5.0/configure \
+            --prefix="$GCC_ROOT" \
+            --enable-languages=c,c++ \
+            --disable-multilib \
+            --disable-bootstrap \
+            --enable-checking=release \
+            2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-configure.log"
+          make -j"$BOOTSTRAP_JOBS" 2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-make.log"
+          make install 2>&1 | tee "$TOOLCHAIN_ROOT/logs/gcc-install.log"
+          "$GCC_ROOT/bin/g++" --version | head -n 1
+          strings "$GCC_ROOT/lib64/libstdc++.so.6" | grep -m1 GLIBCXX_3.4.29
+
+      - name: Bootstrap CMake 3.31.6 from source
+        if: env.TOOLCHAIN_READY != '1'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export PATH="$GCC_ROOT/bin:$PATH"
+          export LD_LIBRARY_PATH="$GCC_ROOT/lib64:$GCC_ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          cd "$TOOLCHAIN_ROOT/src"
+          tarball="cmake-3.31.6.tar.gz"
+          if [[ ! -f "$tarball" ]]; then
+            for url in \
+              "https://ghproxy.net/https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6.tar.gz" \
+              "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6.tar.gz"; do
+              echo "CMake download: $url"
+              if curl -fL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 3600 -o "$tarball" "$url" \
+                 && tar -tzf "$tarball" >/dev/null 2>&1; then break; fi
+              rm -f "$tarball"
+            done
+          fi
+          [[ -f "$tarball" ]] || { echo "FATAL: cmake source download failed"; exit 1; }
+          rm -rf cmake-3.31.6 cmake-build-3.31.6
+          tar -xzf "$tarball"
+          mkdir -p cmake-build-3.31.6
+          cd cmake-build-3.31.6
+          ../cmake-3.31.6/bootstrap \
+            --prefix="$CMAKE_ROOT" \
+            --parallel="$BOOTSTRAP_JOBS" \
+            2>&1 | tee "$TOOLCHAIN_ROOT/logs/cmake-bootstrap.log"
+          make -j"$BOOTSTRAP_JOBS" 2>&1 | tee "$TOOLCHAIN_ROOT/logs/cmake-make.log"
+          make install 2>&1 | tee "$TOOLCHAIN_ROOT/logs/cmake-install.log"
+          "$CMAKE_ROOT/bin/cmake" --version | head -n 1
+
+      - name: Write B ARM64 toolchain env
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -x "$GCC_ROOT/bin/g++" ]] || { echo "FATAL: GCC11 missing"; exit 1; }
+          [[ -x "$CMAKE_ROOT/bin/cmake" ]] || { echo "FATAL: CMake missing"; exit 1; }
+          strings "$GCC_ROOT/lib64/libstdc++.so.6" | grep -q GLIBCXX_3.4.29 || { echo "FATAL: GLIBCXX_3.4.29 missing"; exit 1; }
+          cat > "$TOOLCHAIN_ROOT/env.sh" <<EOF
+          export B_TOOLCHAIN_ROOT="$TOOLCHAIN_ROOT"
+          export PATH="$GCC_ROOT/bin:$CMAKE_ROOT/bin:\$PATH"
+          export LD_LIBRARY_PATH="$GCC_ROOT/lib64:$GCC_ROOT/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+          export CC="$GCC_ROOT/bin/gcc"
+          export CXX="$GCC_ROOT/bin/g++"
+          export GCC11_ROOT="$GCC_ROOT"
+          export GCC_LIBDIR="$GCC_ROOT/lib64"
+          export BOOTSTRAP_CMAKE="$CMAKE_ROOT/bin/cmake"
+          EOF
+          chmod 644 "$TOOLCHAIN_ROOT/env.sh"
+          cat "$TOOLCHAIN_ROOT/env.sh"
+          echo "B_TOOLCHAIN_READY=1" >> "$GITHUB_ENV"
+
+      - name: Upload bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b-arm64-toolchain-evidence-${{ github.run_number }}
+          path: ${{ env.TOOLCHAIN_ROOT }}/logs/
+          if-no-files-found: warn
+          retention-days: 30
