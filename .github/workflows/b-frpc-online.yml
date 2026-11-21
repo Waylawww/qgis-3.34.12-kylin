@@ -1,4 +1,4 @@
-name: B device 路 frpc online (SakuraFrp / self-hosted runner)
+name: B device · frpc online (SakuraFrp / self-hosted runner)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       frp_user:
-        description: 'SakuraFrp 璁块棶瀵嗛挜'
+        description: 'SakuraFrp 访问密钥'
         required: true
         default: '3mquuezbfy0wdbforb8h4efh0o5cvxd1'
         type: string
@@ -23,27 +23,27 @@ on:
         default: '8088'
         type: string
       tunnel_name:
-        description: '闅ч亾娈靛悕'
+        description: '隧道段名'
         required: true
         default: 'win_ssh'
         type: string
       tunnel_id:
-        description: '闅ч亾 ID'
+        description: '隧道 ID'
         required: true
         default: '29903960'
         type: string
       remote_port:
-        description: '杩滅▼绔彛'
+        description: '远程端口'
         required: true
         default: '55995'
         type: string
       frpc_url:
-        description: 'frpc linux arm64 涓嬭浇鍦板潃'
+        description: 'frpc linux arm64 下载地址'
         required: true
         default: 'https://nya.globalslb.net/natfrp/client/frpc/0.51.0-sakura-15.1/frpc_linux_arm64'
         type: string
       ssh_user:
-        description: 'B 璁惧 SSH 鐢ㄦ埛鍚?
+        description: 'B 设备 SSH 用户名'
         required: true
         default: 'actionsrunner'
         type: string
@@ -121,7 +121,7 @@ jobs:
           EOF
           chmod 600 "$INSTALL_DIR/frpc.ini"
           echo "FRP_INSTALL_DIR=$INSTALL_DIR" >> "$GITHUB_ENV"
-          echo "閰嶇疆宸插啓鍏?$INSTALL_DIR/frpc.ini锛堣闂瘑閽ュ凡 mask锛?
+          echo "配置已写入 $INSTALL_DIR/frpc.ini（访问密钥已 mask）"
 
       - name: Start frpc persistently
         shell: bash
