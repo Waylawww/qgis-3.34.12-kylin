@@ -450,19 +450,22 @@ log "xcb QPA 闭合: $(basename "${XCB_PLUGIN}") + $(basename "${XCB_QPA}") + X1
 #     目标机上该路径不存在；构建机上则会误加载构建机原件而非 RPM 自带库。
 #     runner 无 root 权限且未装 patchelf/chrpath，改用 patch-elf-rpath.py
 #     原地覆写 DT_RPATH/DT_RUNPATH 字符串为安装后的绝对前缀。
-if [[ -n "${GCC_LIBDIR}" ]]; then
-  _libstdcpp="$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6" 2>/dev/null || true)"
-  if [[ -n "${_libstdcpp}" && -f "${_libstdcpp}" ]] \
-     && grep -aq 'GLIBCXX_3\.4\.29' "${_libstdcpp}" 2>/dev/null; then
-    cp -L "${_libstdcpp}" "${DEPS_STAGE}/lib/$(basename "${_libstdcpp}")"
-    # 用相对链接，避免符号链接指向构建机绝对路径
-    ln -sfn "$(basename "${_libstdcpp}")" "${DEPS_STAGE}/lib/libstdc++.so.6"
-    log "已打包 GCC11 libstdc++: deps/lib/$(basename "${_libstdcpp}")"
+if [[ "${REQUIRE_GCC11:-true}" == "true" ]]; then
+  if [[ -n "${GCC_LIBDIR}" ]]; then
+    _libstdcpp="$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6" 2>/dev/null || true)"
+    if [[ -n "${_libstdcpp}" && -f "${_libstdcpp}" ]] \
+       && grep -aq 'GLIBCXX_3\.4\.29' "${_libstdcpp}" 2>/dev/null; then
+      cp -L "${_libstdcpp}" "${DEPS_STAGE}/lib/$(basename "${_libstdcpp}")"
+      ln -sfn "$(basename "${_libstdcpp}")" "${DEPS_STAGE}/lib/libstdc++.so.6"
+      log "已打包 GCC11 libstdc++: deps/lib/$(basename "${_libstdcpp}")"
+    else
+      die "GCC11 libstdc++ 缺失或不含 GLIBCXX_3.4.29: GCC_LIBDIR=${GCC_LIBDIR}"
+    fi
   else
-    die "GCC11 libstdc++ 缺失或不含 GLIBCXX_3.4.29: GCC_LIBDIR=${GCC_LIBDIR}"
+    die "未定位到 GCC11 运行库目录（gcc-runtime.txt）；拒绝打出需要高版本 C++ ABI 却不含运行库的 RPM"
   fi
 else
-  die "未定位到 GCC11 运行库目录（gcc-runtime.txt）；拒绝打出需要高版本 C++ ABI 却不含运行库的 RPM"
+  log "REQUIRE_GCC11=false：使用目标系统原生 GCC7 libstdc++，不随包打入 GCC11 运行库"
 fi
 
 FINAL_RPATH="${PREFIX_IN_RPM}/lib:${DEPS_IN_RPM}/lib:${DEPS_IN_RPM}/lib64"

@@ -51,11 +51,15 @@ test -n "$(find "${ROOT}" -name 'libqgis_analysis.so.*' -print -quit)" || die "�
 # RPM 必须自带 GCC11 libstdc++（GLIBCXX_3.4.29 / CXXABI_1.3.13）。
 # 麒麟 V10 系统 /usr/lib64/libstdc++.so.6 来自 gcc-7.3.0，最高约
 # GLIBCXX_3.4.25；缺这份私有运行库时 qgis 在目标机上直接启动失败。
-STDCPP="$(find "${ROOT}" -type f -name 'libstdc++.so.6*' -print -quit)"
-[[ -n "${STDCPP}" ]] || die "RPM 未自带 libstdc++.so.6：目标机 gcc-7.3 运行库不满足 GLIBCXX_3.4.29"
-grep -aq 'GLIBCXX_3\.4\.29' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 GLIBCXX_3.4.29: ${STDCPP}"
-grep -aq 'CXXABI_1\.3\.13' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 CXXABI_1.3.13: ${STDCPP}"
-log "  GCC11 libstdc++ 已随包: ${STDCPP#"${ROOT}"}"
+if [[ "${REQUIRE_GCC11:-true}" == "true" ]]; then
+  STDCPP="$(find "${ROOT}" -type f -name 'libstdc++.so.6*' -print -quit)"
+  [[ -n "${STDCPP}" ]] || die "RPM 未自带 libstdc++.so.6：目标机 gcc-7.3 运行库不满足 GLIBCXX_3.4.29"
+  grep -aq 'GLIBCXX_3\.4\.29' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 GLIBCXX_3.4.29: ${STDCPP}"
+  grep -aq 'CXXABI_1\.3\.13' "${STDCPP}" || die "RPM 自带 libstdc++ 缺 CXXABI_1.3.13: ${STDCPP}"
+  log "  GCC11 libstdc++ 已随包: ${STDCPP#"${ROOT}"}"
+else
+  log "  REQUIRE_GCC11=false：跳过 GCC11 libstdc++ 随包门禁"
+fi
 
 # 桌面 GUI 硬需求：Qt xcb QPA 平台插件 + XcbQpa 运行库 + X11/xkbcommon。
 # 2026-11-14 真机启动失败的根因就是 RPM 里只有 minimal/offscreen/vnc/webgl。
