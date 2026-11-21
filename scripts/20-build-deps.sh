@@ -225,25 +225,27 @@ fetch() {
     warn "  缓存归档损坏，删除: $dest"
     rm -f "$dest" "$dest.ok"
   fi
-  local url
+  local url candidate
   for url in "$@"; do
-    log "  下载 $url"
-    if curl -fsSL --retry 3 --retry-delay 3 --connect-timeout 20 \
-         --speed-limit 10240 --speed-time 180 --max-time 3600 "$url" \
-         -o "${dest}.part" \
-       && [[ -s "${dest}.part" ]] \
-       && [[ $(stat -c %s "${dest}.part") -gt 10000 ]]; then
-      mv -f "${dest}.part" "$dest"
-      if ! validate_archive "$dest"; then
-        warn "  归档不完整，丢弃并尝试下一个源: $url"
-        rm -f "$dest" "$dest.ok"
-        continue
+    for candidate in "$url" "https://ghproxy.net/$url"; do
+      log "  下载 $candidate"
+      if curl -fsSL --retry 4 --retry-delay 3 --connect-timeout 20 \
+           --speed-limit 10240 --speed-time 180 --max-time 3600 "$candidate" \
+           -o "${dest}.part" \
+         && [[ -s "${dest}.part" ]] \
+         && [[ $(stat -c %s "${dest}.part") -gt 10000 ]]; then
+        mv -f "${dest}.part" "$dest"
+        if ! validate_archive "$dest"; then
+          warn "  归档不完整，丢弃并尝试下一个源: $candidate"
+          rm -f "$dest" "$dest.ok"
+          continue
+        fi
+        sha256sum "$dest" >> "$REPORT_DIR/deps-sources.sha256" 2>/dev/null || true
+        return 0
       fi
-      sha256sum "$dest" >> "$REPORT_DIR/deps-sources.sha256" 2>/dev/null || true
-      return 0
-    fi
-    warn "  下载失败: $url"
-    rm -f "${dest}.part"
+      warn "  下载失败: $candidate"
+      rm -f "${dest}.part"
+    done
   done
   return 1
 }
@@ -480,6 +482,11 @@ dep_gdal() {
     -DGDAL_USE_CURL:BOOL=OFF -DGDAL_USE_POSTGRESQL:BOOL=OFF \
     -DGDAL_USE_ZSTD:BOOL=OFF -DGDAL_USE_GEOTIFF:BOOL=OFF \
     -DPROJ_ROOT:PATH="$DEPS_PREFIX" || return 1
+  if [[ "${WITH_BINDINGS:-ON}" != "ON" ]]; then
+    [[ -x "$DEPS_PREFIX/bin/gdalinfo" ]] || installed_lib libgdal.so
+    log "  WITH_BINDINGS=OFF：跳过 GDAL Python 绑定"
+    return 0
+  fi
   # 捆绑 GDAL Python 绑定（osgeo 模块）到私有 site-packages，版本对齐打包的
   # GDAL 3.5.3，确保运行期 processing/grassprovider 插件能 `import osgeo`，
   # 且不会加载两套 libgdal（避免 ABI 冲突导致 QGIS 崩溃）。
@@ -990,12 +997,17 @@ dep_qsci_py() {
     'from PyQt5 import Qsci; print("PyQt5.Qsci", Qsci.QSCINTILLA_VERSION_STR)'
 }
 
-for pair in "geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
+DEPS_CHAIN=("geos:dep_geos" "proj:dep_proj" "spatialindex:dep_spatialindex" \
             "libzip:dep_libzip" "exiv2:dep_exiv2" "gdal_py:dep_gdal" \
             "qt:dep_qt" "qwt:dep_qwt" "qscintilla:dep_qscintilla" \
-            "qca:dep_qca" "qtkeychain:dep_qtkeychain" \
-            "sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py" \
-            "python_runtime2:dep_python_runtime"; do
+            "qca:dep_qca" "qtkeychain:dep_qtkeychain")
+if [[ "${WITH_BINDINGS:-ON}" == "ON" ]]; then
+  DEPS_CHAIN+=("sip:dep_sip" "pyqt5:dep_pyqt5" "qsci_py:dep_qsci_py" \
+               "python_runtime2:dep_python_runtime")
+else
+  log "WITH_BINDINGS=OFF：跳过 sip / PyQt5 / Qsci Python / python_runtime2 依赖"
+fi
+for pair in "${DEPS_CHAIN[@]}"; do
   run_dep "${pair%%:*}" "${pair##*:}"
 done
 

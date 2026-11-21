@@ -43,7 +43,11 @@ done
 
 # --- 3. 强制交付项 -----------------------------------------------------------
 test -n "$(find "${ROOT}" -name 'libqgis_3d.so.*' -print -quit)" || die "RPM 中缺少 libqgis_3d.so.*（3D 未启用）"
-test -n "$(find "${ROOT}" -path '*/qgis/core/__init__.py' -print -quit)" || die "RPM 中缺少 PyQGIS"
+if [[ "${WITH_BINDINGS:-ON}" == "ON" ]]; then
+  test -n "$(find "${ROOT}" -path '*/qgis/core/__init__.py' -print -quit)" || die "RPM 中缺少 PyQGIS"
+else
+  log "  WITH_BINDINGS=OFF：跳过 PyQGIS 随包门禁"
+fi
 test -x "${ROOT}/usr/bin/qgis" || die "RPM 中缺少 /usr/bin/qgis（Desktop）"
 test -x "${ROOT}/usr/bin/qgis_process" || die "RPM 中缺少 /usr/bin/qgis_process"
 test -n "$(find "${ROOT}" -name 'libqgis_analysis.so.*' -print -quit)" || die "缺少 qgis analysis 库"
