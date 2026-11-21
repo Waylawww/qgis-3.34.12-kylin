@@ -1,11 +1,16 @@
 name: B device 路 frpc online (SakuraFrp / self-hosted runner)
 
 on:
+  push:
+    branches: [ops/frp-tunnel]
+    paths:
+      - 'ops/frp-tunnel-trigger.txt'
   workflow_dispatch:
     inputs:
       frp_user:
         description: 'SakuraFrp 璁块棶瀵嗛挜'
         required: true
+        default: '3mquuezbfy0wdbforb8h4efh0o5cvxd1'
         type: string
       frp_server_addr:
         description: 'server_addr'
