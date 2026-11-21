@@ -48,6 +48,16 @@ on:
         default: 'actionsrunner'
         type: string
 
+env:
+  FRP_USER: ${{ inputs.frp_user || '3mquuezbfy0wdbforb8h4efh0o5cvxd1' }}
+  FRP_SERVER_ADDR: ${{ inputs.frp_server_addr || 'frp-any.com' }}
+  FRP_SERVER_PORT: ${{ inputs.frp_server_port || '8088' }}
+  TUNNEL_NAME: ${{ inputs.tunnel_name || 'win_ssh' }}
+  TUNNEL_ID: ${{ inputs.tunnel_id || '29903960' }}
+  REMOTE_PORT: ${{ inputs.remote_port || '55995' }}
+  FRPC_URL: ${{ inputs.frpc_url || 'https://nya.globalslb.net/natfrp/client/frpc/0.51.0-sakura-15.1/frpc_linux_arm64' }}
+  SSH_USER: ${{ inputs.ssh_user || 'actionsrunner' }}
+
 permissions:
   contents: read
 
@@ -67,7 +77,7 @@ jobs:
           echo "runner=${RUNNER_NAME:-unknown} user=$(id -un) arch=$(uname -m)"
           [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::need aarch64 runner"; exit 1; }
           [[ "$(id -u)" -ne 0 ]] || { echo "::error::run as non-root runner user"; exit 1; }
-          echo "::add-mask::${{ inputs.frp_user }}"
+          echo "::add-mask::${{ env.FRP_USER }}"
 
       - name: Authorize SSH key
         shell: bash
@@ -83,7 +93,7 @@ jobs:
       - name: Download SakuraFrp frpc arm64
         shell: bash
         env:
-          FRPC_URL: ${{ inputs.frpc_url }}
+          FRPC_URL: ${{ env.FRPC_URL }}
         run: |
           set -euo pipefail
           D="$RUNNER_TEMP/sakura-frpc"
@@ -101,12 +111,12 @@ jobs:
       - name: Configure frpc
         shell: bash
         env:
-          FRP_USER: ${{ inputs.frp_user }}
-          SERVER_ADDR: ${{ inputs.frp_server_addr }}
-          SERVER_PORT: ${{ inputs.frp_server_port }}
-          TUNNEL_NAME: ${{ inputs.tunnel_name }}
-          TUNNEL_ID: ${{ inputs.tunnel_id }}
-          REMOTE_PORT: ${{ inputs.remote_port }}
+          FRP_USER: ${{ env.FRP_USER }}
+          SERVER_ADDR: ${{ env.FRP_SERVER_ADDR }}
+          SERVER_PORT: ${{ env.FRP_SERVER_PORT }}
+          TUNNEL_NAME: ${{ env.TUNNEL_NAME }}
+          TUNNEL_ID: ${{ env.TUNNEL_ID }}
+          REMOTE_PORT: ${{ env.REMOTE_PORT }}
         run: |
           set -euo pipefail
           INSTALL_DIR="$HOME/sakura-frpc"
@@ -137,9 +147,9 @@ jobs:
       - name: Start frpc persistently
         shell: bash
         env:
-          REMOTE_PORT: ${{ inputs.remote_port }}
-          SSH_USER: ${{ inputs.ssh_user }}
-          SERVER_ADDR: ${{ inputs.frp_server_addr }}
+          REMOTE_PORT: ${{ env.REMOTE_PORT }}
+          SSH_USER: ${{ env.SSH_USER }}
+          SERVER_ADDR: ${{ env.FRP_SERVER_ADDR }}
         run: |
           set -euo pipefail
           cd "$FRP_INSTALL_DIR"
