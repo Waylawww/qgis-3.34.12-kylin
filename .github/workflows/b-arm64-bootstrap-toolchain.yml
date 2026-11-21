@@ -96,6 +96,9 @@ jobs:
           export BUILD_CPP=/usr/bin/cpp
           export MAKEINFO=true
           ../gcc-11.5.0/configure \
+            CC_FOR_BUILD=/usr/bin/gcc CXX_FOR_BUILD=/usr/bin/g++ \
+            CPP_FOR_BUILD=/usr/bin/cpp BUILD_CPP=/usr/bin/cpp \
+            ac_cv_prog_CPP_FOR_BUILD=/usr/bin/cpp \
             --build=aarch64-linux-gnu --host=aarch64-linux-gnu --target=aarch64-linux-gnu \
             --prefix="$GCC_ROOT" \
             --enable-languages=c,c++ \
