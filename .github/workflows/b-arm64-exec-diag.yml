@@ -1,0 +1,40 @@
+name: B device ARM64 · executable diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 15
+    steps:
+      - name: Compile and run native test program
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "uname=$(uname -m) user=$(id -un) home=$HOME"
+          echo "PATH=$PATH"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
+          echo "=== mounts ==="
+          mount | grep -E ' (/ |/home |/opt )' || true
+          D="$HOME/_b-exec-diag"
+          mkdir -p "$D"; cd "$D"
+          cat > hello.c <<'EOF'
+#include <stdio.h>
+int main(void){ printf("hello from aarch64\n"); return 0; }
+EOF
+          gcc -v hello.c -o hello 2>&1 | tail -n 30
+          echo "=== file ==="; file hello
+          echo "=== ldd ==="; ldd hello || true
+          echo "=== run ==="
+          set +e
+          ./hello
+          rc=$?
+          set -e
+          echo "run_rc=$rc"
+          echo "=== stale conftest ==="
+          CONF="$HOME/_b-arm64-toolchain/src/gcc-build-11.5.0/config.log"
+          if [[ -f "$CONF" ]]; then tail -n 160 "$CONF"; else echo "no $CONF"; fi
