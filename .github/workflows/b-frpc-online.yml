@@ -100,6 +100,9 @@ jobs:
           getent passwd "$(id -un)" || true
           grep -E '^[[:space:]]*(PubkeyAuthentication|AuthorizedKeysFile|PasswordAuthentication|PermitRootLogin)' /etc/ssh/sshd_config 2>/dev/null || true
           systemctl status sshd --no-pager -l 2>/dev/null | head -30 || true
+          echo '--- QGIS OpenGL deps ---'
+          rpm -q mesa-libGL-devel mesa-libEGL-devel mesa-libGLU-devel || true
+          ls -l /usr/include/GL/gl.h /usr/lib64/libGL.so /usr/lib64/libEGL.so 2>/dev/null || true
 
       - name: Download SakuraFrp frpc arm64
         shell: bash
