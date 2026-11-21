@@ -11,7 +11,7 @@ log "QGIS ${QGIS_VERSION} (tag ${QGIS_GIT_TAG}, commit ${QGIS_GIT_COMMIT})"
 log "目标 ${TARGET_OS} / ${TARGET_ARCH} / ${TARGET_CPU}"
 
 [[ "$(id -u)" -ne 0 ]] || die "拒绝以 root 身份编译；runner 必须使用 actionsrunner 账户"
-[[ "$(uname -m)" == "x86_64" ]] || die "不是 x86_64 架构"
+[[ "$(uname -m)" == "${TARGET_ARCH}" ]] || die "架构不匹配: uname=$(uname -m), TARGET_ARCH=${TARGET_ARCH}"
 [[ -f /etc/os-release ]] || die "缺少 /etc/os-release"
 os_id="$(grep -E '^ID=' /etc/os-release | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')"
 os_ver="$(grep -E '^VERSION_ID=' /etc/os-release | cut -d= -f2- | tr -d '"')"

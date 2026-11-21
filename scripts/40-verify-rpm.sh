@@ -31,7 +31,7 @@ for f in "${RPMS[@]}"; do
   arch="$(rpm -qp --qf '%{ARCH}' "$f")"
   name="$(rpm -qp --qf '%{NAME}' "$f")"
   [[ "${ver}" == "${QGIS_VERSION}" ]] || die "${b}: VERSION=${ver}，不是 ${QGIS_VERSION}"
-  [[ "${arch}" == "x86_64" ]] || die "${b}: ARCH=${arch}，不是 x86_64"
+  [[ "${arch}" == "${TARGET_ARCH}" ]] || die "${b}: ARCH=${arch}，不是 ${TARGET_ARCH}"
   sha256sum "$f" >> "${REPORT_DIR}/rpm/checksums.sha256"
   log "  ${b}: ${name}-${ver}.${arch}  $(stat -c %s "$f") bytes"
 done
@@ -75,7 +75,7 @@ log "  xcb 平台插件已随包: ${XCB_PLUGIN#"${ROOT}"}"
 # （如 PyQt5/sip.cpython-37m-x86_64-linux-gnu.so），所有 Linux 发行版（含
 # 麒麟/RHEL）都这样命名，并非 Debian 专属；因此只匹配真正的 Debian 库目录
 # （路径中间的 */x86_64-linux-gnu/*），避免误伤合法的 .so 文件名后缀。
-if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path '*/x86_64-linux-gnu/*' \) -print -quit | grep -q .; then
+if find "${ROOT}" \( -name '*.deb' -o -name 'dpkg*' -o -path "*/${TARGET_ARCH}-linux-gnu/*" \) -print -quit | grep -q .; then
   die "检测到 Debian/Ubuntu 体系文件：本工程要求麒麟原生 RPM 依赖体系"
 fi
 if grep -RIl 'ubuntu\|debian' "${REPORT_DIR}/rpm/"*.requires.txt 2>/dev/null | grep -q .; then
@@ -121,16 +121,17 @@ done < <(find "${ROOT}" -type f \( -name 'libqgis*.so.*' -o -path '*/bin/qgis*' 
 bash "${REPO_ROOT}/scripts/check-isa.sh" "${ROOT}"
 
 # --- 6. 汇总 -----------------------------------------------------------------
-python3 - "${REPORT_DIR}" "${QGIS_VERSION}" "${#RPMS[@]}" "${RPMS[@]}" <<'PY'
+python3 - "${REPORT_DIR}" "${QGIS_VERSION}" "${TARGET_ARCH}" "${#RPMS[@]}" "${RPMS[@]}" <<'PY'
 import hashlib, json, os, sys
-rep, version, count, *rpms = sys.argv[1:]
+rep, version, target_arch, count, *rpms = sys.argv[1:]
 out = {
     "qgis_version": version,
+    "target_arch": target_arch,
     "rpm_count": int(count),
     "rpms": [{"name": os.path.basename(p), "bytes": os.path.getsize(p),
               "sha256": hashlib.sha256(open(p, "rb").read()).hexdigest()} for p in rpms],
     "checks": {
-        "version_lock": "PASS", "arch_x86_64": "PASS", "3d_library": "PASS",
+        "version_lock": "PASS", "arch_target": "PASS", "3d_library": "PASS",
         "pyqgis": "PASS", "desktop_binary": "PASS", "ldd": "PASS",
         "gcc11_libstdcxx": "PASS", "xcb_platform_plugin": "PASS",
         "isa_glibc": json.load(open(os.path.join(rep, "isa-report.json"), encoding="utf-8"))["verdict"],

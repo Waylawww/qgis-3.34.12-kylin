@@ -30,10 +30,16 @@ elf_head() {
 while IFS= read -r -d '' f; do
   rel="${f#"${DIR}"}"
   [[ "$(elf_head "$f" 0 4)" == "7f454c46" ]] || continue   # 非 ELF：wrapper / 数据文件
-  [[ "$(elf_head "$f" 18 2)" == "3e00" ]] || { warn "非 x86-64 ELF: ${rel}"; continue; }
-  objdump -d --no-show-raw-insn "$f" > "${TMP}/disasm" 2>/dev/null || continue
-  zmm="$(grep -cE '%zmm[0-9]+|%k[0-7]\b' "${TMP}/disasm" || true)"
-  ymm="$(grep -cE '%ymm[0-9]+' "${TMP}/disasm" || true)"
+  machine="$(elf_head "$f" 18 2)"
+  if [[ "${TARGET_ARCH}" == "aarch64" ]]; then
+    [[ "$machine" == "b700" ]] || { warn "非 aarch64 ELF: ${rel} (machine=$machine)"; continue; }
+    zmm=0; ymm=0
+  else
+    [[ "$machine" == "3e00" ]] || { warn "非 x86-64 ELF: ${rel} (machine=$machine)"; continue; }
+    objdump -d --no-show-raw-insn "$f" > "${TMP}/disasm" 2>/dev/null || continue
+    zmm="$(grep -cE '%zmm[0-9]+|%k[0-7]\b' "${TMP}/disasm" || true)"
+    ymm="$(grep -cE '%ymm[0-9]+' "${TMP}/disasm" || true)"
+  fi
   glibc_max="$(objdump -T "$f" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' \
                | sort -Vu | tail -n1 || true)"
   rpath="$(readelf -d "$f" 2>/dev/null | grep -E 'RPATH|RUNPATH' || true)"
@@ -54,9 +60,9 @@ done < <(find "${DIR}" -type f \
               \( -name '*.so' -o -name '*.so.*' -o -name 'qgis' -o -name 'qgis_*' \) -print0)
 
 python3 - "${TMP}/records.tsv" "${KYLIN_GLIBC}" "${ALLOW_AVX512}" "${REPORT_DIR}" \
-        "${TMP}/rpath-audit.tsv" <<'PY'
+        "${TMP}/rpath-audit.tsv" "${TARGET_ARCH}" "${ISA_POLICY}" <<'PY'
 import json, os, re, sys
-records, target_glibc, allow_avx512, outdir, rpath_audit = sys.argv[1:6]
+records, target_glibc, allow_avx512, outdir, rpath_audit, target_arch, isa_policy = sys.argv[1:8]
 
 def vk(s):
     return tuple(int(x) for x in (re.findall(r"\d+", s or "0") + ["0", "0", "0"])[:3])
@@ -74,7 +80,8 @@ avx2 = [r for r in rows if r["avx2"] > 0]
 
 # 构建机绝对路径特征：依赖阶段的 -Wl,-rpath,$DEPS_PREFIX 与 rpmbuild 临时目录
 BAD = ("/work/", "/rpmbuild/", "BUILDROOT", "actions-runner",
-       "_qgis-334-", "qgis-33412-work", "/usr/local/gcc11")
+       "_qgis-334-", "_b-arm64-", "qgis-33412-work", "/usr/local/gcc11",
+       "/opt/gcc-11.")
 audit_rows = []
 for line in open(rpath_audit, encoding="utf-8"):
     parts = line.rstrip("\n").split("\t")
@@ -89,7 +96,8 @@ if target_glibc and "__UNCONFIRMED__" not in target_glibc:
             glibc_too_new.append(r)
 
 report = {
-    "policy": "x86-64 baseline (-march=x86-64 -mtune=generic), no AVX/AVX2/AVX-512",
+    "policy": isa_policy,
+    "target_arch": target_arch,
     "target_glibc": target_glibc,
     "scanned_files": len(rows),
     "rpath_audited_files": len(audit_rows),

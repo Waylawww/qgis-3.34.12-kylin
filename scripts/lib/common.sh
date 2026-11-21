@@ -14,7 +14,7 @@ export WORK_DIR OUT_DIR REPORT_DIR LOG_DIR
 
 mkdir -p "${WORK_DIR}" "${OUT_DIR}" "${REPORT_DIR}" "${LOG_DIR}"
 
-BUILD_ENV="${REPO_ROOT}/config/build.env"
+BUILD_ENV="${BUILD_ENV:-${REPO_ROOT}/config/build.env}"
 KYLIN_ENV="${REPO_ROOT}/config/kylin.confirmed.env"
 DEPS_ENV="${REPO_ROOT}/config/deps.confirmed.env"
 

@@ -16,7 +16,7 @@
 # 真实创建 Qt 窗口截图（无 Xvfb 时降级为插件加载探测）。
 set -Eeuo pipefail
 
-RPM="${OUT_DIR}/rpms/qgis-${QGIS_VERSION}-1.ky10.x86_64.rpm"
+RPM="${OUT_DIR}/rpms/qgis-${QGIS_VERSION}-1.ky10.${TARGET_ARCH}.rpm"
 INSTALLER=/usr/local/sbin/qgis-ci-install
 PREFIX="/opt/qgis-${QGIS_VERSION}"
 DEPS="${PREFIX}/deps"

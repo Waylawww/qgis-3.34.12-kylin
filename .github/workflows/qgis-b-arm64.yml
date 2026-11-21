@@ -1,0 +1,151 @@
+name: QGIS 3.34.12 · Native Kylin V10 aarch64 RPM (B device)
+
+on:
+  push:
+    branches: [feat/b-qgis-arm64]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'diagnose / deps / qgis / install / all'
+        type: choice
+        options: [diagnose, deps, qgis, install, all]
+        default: diagnose
+      build_jobs:
+        description: '并行编译任务数'
+        default: '6'
+      force_rebuild_deps:
+        description: '忽略依赖缓存，强制重建依赖'
+        type: boolean
+        default: false
+      force_rebuild_qt:
+        description: '强制重编 Qt（xcb 桌面 GUI）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qgis-native-b-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: ${{ github.event.inputs.stage || 'diagnose' }}
+  QGIS_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '6' }}
+  FORCE_REBUILD_DEPS: ${{ github.event.inputs.force_rebuild_deps || 'false' }}
+  FORCE_REBUILD_QT: ${{ github.event.inputs.force_rebuild_qt || 'false' }}
+
+jobs:
+  native-build:
+    name: Native QGIS build on Kylin V10 aarch64 B device
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 720
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::not aarch64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      - name: Checkout via ghproxy
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: 'url.https://ghproxy.net/https://github.com/.insteadOf'
+          GIT_CONFIG_VALUE_0: 'https://github.com/'
+        run: |
+          set -euo pipefail
+          D="${GITHUB_WORKSPACE}/qgis-b-arm64-repo"
+          rm -rf "$D"
+          git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+            "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$D"
+          echo "REPO_ROOT=$D" >> "$GITHUB_ENV"
+          git -C "$D" --no-pager log -1 --oneline
+
+      - name: Prepare persistent dirs and B ARM64 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          TOOLCHAIN_ROOT="$BASE/_b-arm64-toolchain"
+          [[ -f "$TOOLCHAIN_ROOT/env.sh" ]] || { echo "FATAL: B toolchain missing, run b-arm64-bootstrap-toolchain first"; exit 1; }
+          # shellcheck disable=SC1090
+          source "$TOOLCHAIN_ROOT/env.sh"
+          export DEPS_PREFIX="$BASE/_b-qgis-334-deps"
+          export CACHE_DIR="$BASE/_b-qgis-334-cache"
+          export WORK_DIR="$BASE/_b-qgis-334-work"
+          export OUT_DIR="$BASE/_b-qgis-334-out"
+          export REPORT_DIR="$BASE/_b-qgis-334-reports"
+          export BUILD_ENV="$REPO_ROOT/config/build-b-arm64.env"
+          mkdir -p "$DEPS_PREFIX" "$CACHE_DIR" "$WORK_DIR" \
+                   "$OUT_DIR/rpms" "$OUT_DIR/srpms" \
+                   "$REPORT_DIR/logs" "$REPORT_DIR/stages"
+          {
+            echo "BUILD_ENV=$BUILD_ENV"
+            echo "QGIS_BUILD_BASE=$BASE"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+            echo "CACHE_DIR=$CACHE_DIR"
+            echo "WORK_DIR=$WORK_DIR"
+            echo "OUT_DIR=$OUT_DIR"
+            echo "REPORT_DIR=$REPORT_DIR"
+            echo "PATH=$PATH"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            echo "CC=$CC"
+            echo "CXX=$CXX"
+            echo "GCC11_ROOT=$GCC11_ROOT"
+            echo "GCC_LIBDIR=$GCC_LIBDIR"
+            echo "BOOTSTRAP_CMAKE=$BOOTSTRAP_CMAKE"
+          } >> "$GITHUB_ENV"
+          echo "toolchain: $($CXX --version | head -n1)"
+          echo "cmake: $($BOOTSTRAP_CMAKE --version | head -n1)"
+          df -h "$BASE"; free -h
+
+      - name: Native build entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$REPO_ROOT"
+          bash scripts/native-build.sh 2>&1 | tee "$REPORT_DIR/logs/native-build.log"
+
+      - name: Failure tail
+        if: failure()
+        shell: bash
+        run: |
+          tail -n 200 "$REPORT_DIR/logs/native-build.log" 2>/dev/null || true
+          tail -n 120 "$REPORT_DIR/logs/00-preflight.log" 2>/dev/null || true
+          tail -n 120 "$REPORT_DIR/logs/20-build-deps.log" 2>/dev/null || true
+          tail -n 120 "$REPORT_DIR/logs/30-build-qgis.log" 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qgis-b-arm64-evidence-${{ github.run_number }}-${{ github.event.inputs.stage || 'diagnose' }}
+          path: |
+            ${{ env.REPORT_DIR }}/
+            ${{ env.REPO_ROOT }}/reports/
+            ${{ env.REPO_ROOT }}/config/*.confirmed.env
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qgis-b-arm64-rpm-${{ github.run_number }}
+          path: |
+            ${{ env.OUT_DIR }}/rpms/*.rpm
+            ${{ env.OUT_DIR }}/srpms/*.src.rpm
+            ${{ env.OUT_DIR }}/*.sha256
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90

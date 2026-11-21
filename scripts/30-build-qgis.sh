@@ -512,9 +512,9 @@ cat > "$SPEC" <<EOF
 Name:           qgis
 Version:        ${QGIS_VERSION}
 Release:        1.ky10
-Summary:        QGIS ${QGIS_VERSION} native build for Kylin V10 x86_64
+Summary:        QGIS ${QGIS_VERSION} native build for Kylin V10 ${TARGET_ARCH}
 License:        GPLv2+
-BuildArch:      x86_64
+BuildArch:      ${TARGET_ARCH}
 AutoReqProv:    no
 # 二进制打包阶段跳过 brp 后处理脚本：Kylin 默认的后安装处理链中的
 # brp-python-bytecompile 写死调用 /usr/bin/python（Python 2）去预编译全部
@@ -524,7 +524,7 @@ AutoReqProv:    no
 # ldconfig 等），确保 spec 可解析且打包成功。
 %global __os_install_post %{nil}
 %description
-QGIS ${QGIS_VERSION} compiled natively on Kylin V10 / Hygon C86 with a private
+QGIS ${QGIS_VERSION} compiled natively on Kylin V10 / ${TARGET_CPU} with a private
 Qt 5.15 / PROJ / GEOS / GDAL / SIP runtime under ${PREFIX_IN_RPM}.
 %prep
 %build

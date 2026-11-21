@@ -48,7 +48,7 @@ mkdir -p "$SRC" "$BUILD" "$STAMPS" "$SYSROOT" "$LOG" "$CACHE_DIR/rpms" "$WHL_DIR
 : > "$STATUS_FILE"
 declare -A STATUS
 FAILURES=()
-GCC_LIBDIR=""
+GCC_LIBDIR="${GCC_LIBDIR:-}"
 
 info "== 阶段 2 / BUILD NATIVE DEPENDENCIES =="
 log "prefix=$DEPS_PREFIX jobs=$JOBS sysroot=$SYSROOT"
@@ -63,6 +63,10 @@ fi
 # 动态加载器默认只会找到后者，导致 Qt bootstrap 出的 qmake 直接起不来。
 detect_gcc_runtime() {
   local cand search root d
+  if [[ -n "$GCC_LIBDIR" && -e "$GCC_LIBDIR/libstdc++.so.6" ]] \
+     && grep -aq 'GLIBCXX_3\.4\.29' "$GCC_LIBDIR/libstdc++.so.6" 2>/dev/null; then
+    echo "$GCC_LIBDIR"; return 0
+  fi
   cand="$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)"
   if [[ "$cand" == /* && -e "$cand" ]] \
      && grep -aq 'GLIBCXX_3\.4\.29' "$cand" 2>/dev/null; then
