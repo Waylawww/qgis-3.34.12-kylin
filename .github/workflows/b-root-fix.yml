@@ -36,12 +36,12 @@ jobs:
           [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::need aarch64"; exit 1; }
           echo "::add-mask::$ROOT_PASS"
 
-      - name: Validate sudo
+      - name: Validate root
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "$ROOT_PASS" | sudo -S -k -p 'sudo password: ' true
-          echo "sudo ok"
+          printf '%s\n' "$ROOT_PASS" | su - root -c 'whoami; id -u'
+          echo "root ok"
 
       - name: Inspect sshd
         shell: bash
