@@ -15,6 +15,13 @@
 # 现在额外校验 xcb 插件/运行库随包、ldd 闭合，并在 Xvfb 提供的 X11 显示上
 # 真实创建 Qt 窗口截图（无 Xvfb 时降级为插件加载探测）。
 set -Eeuo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_build_env
+
+SKIP_GCC11=false
+[[ "${REQUIRE_GCC11:-true}" == "true" ]] || SKIP_GCC11=true
+SKIP_PYQGIS=false
+[[ "${WITH_BINDINGS:-ON}" == "ON" ]] || SKIP_PYQGIS=true
 
 RPM="${OUT_DIR}/rpms/qgis-${QGIS_VERSION}-1.ky10.${TARGET_ARCH}.rpm"
 INSTALLER=/usr/local/sbin/qgis-ci-install
@@ -176,23 +183,35 @@ plugin_py_deps() {
 
 echo "== 运行自测 =="
 check rpm_installed          rpm_installed
-check private_libstdcpp      private_libstdcpp
+if [[ "$SKIP_GCC11" == "true" ]]; then
+  echo "  SKIP  private_libstdcpp (REQUIRE_GCC11=false)"
+else
+  check private_libstdcpp      private_libstdcpp
+fi
 check ldd_clean              ldd_clean
 check qgis_process_version   qgis_process_version
 check qgis_version           qgis_version
-check pyqgis_version         pyqgis_version
-check pyqgis_smoke           pyqgis_smoke
-check plugin_py_deps         plugin_py_deps
+if [[ "$SKIP_PYQGIS" == "true" ]]; then
+  echo "  SKIP  pyqgis_version / pyqgis_smoke / plugin_py_deps (WITH_BINDINGS=OFF)"
+else
+  check pyqgis_version         pyqgis_version
+  check pyqgis_smoke           pyqgis_smoke
+  check plugin_py_deps         plugin_py_deps
+fi
 echo "== 桌面 GUI(xcb) 验收（模式: ${GUI_MODE}） =="
 check xcb_files              xcb_files
 check xcb_ldd_clean          xcb_ldd_clean
-check gui_xcb_smoke          gui_xcb_smoke
+if [[ "$SKIP_PYQGIS" == "true" ]]; then
+  echo "  SKIP  gui_xcb_smoke (WITH_BINDINGS=OFF, PyQt5 未随包)"
+else
+  check gui_xcb_smoke          gui_xcb_smoke
+fi
 
 # --- 汇总报告 ---------------------------------------------------------------
-if ! python3 - "${EVID}" "${QGIS_VERSION}" "${CHECKS[@]}" <<'PY'
+if ! python3 - "${EVID}" "${QGIS_VERSION}" "${SKIP_GCC11}" "${SKIP_PYQGIS}" "${CHECKS[@]}" <<'PY'
 import json, os, sys
 
-evid, version, *items = sys.argv[1:]
+evid, version, skip_gcc11, skip_pyqgis, *items = sys.argv[1:]
 checks = {}
 for item in items:
     k, _, v = item.partition(":")
@@ -204,10 +223,13 @@ if os.path.exists(smoke_path):
     smoke = json.load(open(smoke_path, encoding="utf-8"))
     checks["map_render"] = smoke.get("status", "FAIL")
 
-mandatory = ("rpm_installed", "private_libstdcpp", "ldd_clean",
-             "qgis_process_version", "qgis_version", "pyqgis_version",
-             "pyqgis_smoke", "plugin_py_deps", "map_render", "xcb_files",
-             "xcb_ldd_clean", "gui_xcb_smoke")
+mandatory = ["rpm_installed", "ldd_clean", "qgis_process_version",
+             "qgis_version", "xcb_files", "xcb_ldd_clean"]
+if skip_gcc11 != "true":
+    mandatory.append("private_libstdcpp")
+if skip_pyqgis != "true":
+    mandatory += ["pyqgis_version", "pyqgis_smoke", "plugin_py_deps",
+                  "map_render", "gui_xcb_smoke"]
 failed = [k for k in mandatory if checks.get(k) != "PASS"]
 render_png = os.path.join(evid, "render.png")
 gui_path = os.path.join(evid, "gui-xcb.json")
@@ -217,7 +239,7 @@ if os.path.exists(gui_path):
     gui = json.load(open(gui_path, encoding="utf-8"))
 report = {
     "stage": "STAGE_D_TARGET_HOST_INSTALL_AND_SELFTEST",
-    "environment": "self-hosted runner host, Kylin V10 (Halberd) / x86_64 / Hygon C86",
+    "environment": "self-hosted runner host, Kylin V10 / %s" % os.uname().machine,
     "host": os.uname().nodename,
     "run_as": os.popen("id -un").read().strip(),
     "qgis_version": version,
