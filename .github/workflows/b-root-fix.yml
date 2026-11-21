@@ -101,7 +101,10 @@ jobs:
           set -euo pipefail
           cat > /tmp/frp-install-service.sh <<'SCRIPT'
           set -e
-          pkill -f '/home/actionsrunner/sakura-frpc/frpc' 2>/dev/null || true
+          pkill -9 -f 'sakura-frpc' 2>/dev/null || true
+          pkill -9 -f '/home/actionsrunner/sakura-frpc/frpc' 2>/dev/null || true
+          pkill -9 -f 'frpc' 2>/dev/null || true
+          sleep 3
           install -m 0755 /home/actionsrunner/sakura-frpc/frpc /usr/local/bin/sakura-frpc
           mkdir -p /etc/sakura-frpc
           cp /home/actionsrunner/sakura-frpc/frpc.ini /etc/sakura-frpc/frpc.ini
@@ -124,7 +127,10 @@ jobs:
           EOF
           systemctl daemon-reload
           systemctl enable --now sakura-frpc
+          sleep 5
           systemctl status sakura-frpc --no-pager -l || true
+          echo '--- frpc journal ---'
+          journalctl -u sakura-frpc --since '3 minutes ago' --no-pager 2>/dev/null | tail -50 || true
           SCRIPT
           chmod 644 /tmp/frp-install-service.sh
           printf '%s\n' "$ROOT_PASS" | su - root -c 'bash /tmp/frp-install-service.sh'
