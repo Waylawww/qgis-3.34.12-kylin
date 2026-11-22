@@ -11,6 +11,19 @@ EVID="${VSG_REPORT_DIR}/install-selftest"
 mkdir -p "$EVID"
 echo "runner=$(id -un) rpm=$RPM"
 
+# api_smoke 优先用注入的新版 cmake（B 设备系统 cmake 3.16 可能过低）。
+SMOKE_CMAKE="${VSG_CMAKE:-}"
+if [[ -z "$SMOKE_CMAKE" ]] || ! "$SMOKE_CMAKE" --version 2>/dev/null | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+  SMOKE_CMAKE="$(command -v cmake)"
+  for bc in "${DEPS_PREFIX:-}/bin/cmake" "${GLSLANG_PREFIX%/opt/*}/tools"/cmake-*/bin/cmake; do
+    [[ -x "$bc" ]] || continue
+    if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+      SMOKE_CMAKE="$bc"; break
+    fi
+  done
+fi
+log "api_smoke cmake: ${SMOKE_CMAKE} ($(${SMOKE_CMAKE} --version | head -n1))"
+
 INSTALLER=/usr/local/sbin/vsg-ci-install
 INSTALL_MODE="rpm-extract"
 INSTALL_ROOT="$VSG_RPM_ROOT"
@@ -80,12 +93,12 @@ int main() {
     return 0;
 }
 EOF
-  cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
+  "$SMOKE_CMAKE" -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="${PFX};${GLSLANG_PREFIX};${VULKAN_SDK_PREFIX}" \
     -Dvsg_DIR="${LIBDIR}/cmake/vsg" \
     -DVulkan_INCLUDE_DIR="${VULKAN_SDK_PREFIX}/include" \
     -DVulkan_LIBRARY=/usr/lib64/libvulkan.so
-  cmake --build "$d/build" --parallel 2
+  "$SMOKE_CMAKE" --build "$d/build" --parallel 2
   LD_LIBRARY_PATH="${LIBDIR}:${GLSLANG_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "$d/build/smoke"
 }
@@ -115,7 +128,7 @@ mandatory = ('package_contents', 'installed_files', 'api_smoke', 'ldd_clean')
 if mode == 'system-rpm': mandatory += ('rpm_installed',)
 failed = [k for k in mandatory if checks.get(k) != 'PASS']
 report = {'stage': 'VSG_STAGE_3_INSTALL_AND_SELFTEST',
-          'environment': 'self-hosted Kylin V10 / x86_64 / Hygon C86',
+          'environment': 'self-hosted runner host, Kylin V10 / %s' % os.uname().machine,
           'vsg_version': version, 'install_mode': mode,
           'checks': checks, 'failed_checks': failed,
           'verdict': 'PASS' if not failed else 'FAIL'}
