@@ -1,32 +1,36 @@
 --- a/glslang/Include/InfoSink.h
 +++ b/glslang/Include/InfoSink.h
-@@ -36,7 +36,15 @@
+@@ -36,8 +36,18 @@
  #define _INFOSINK_INCLUDED_
  
  #include "../Include/Common.h"
-+#if defined(__GNUC__) && __GNUC__ < 8
-+// Kylin V10 aarch64 ships GCC 7.3.0, which has no <filesystem> but provides
-+// the equivalent <experimental/filesystem> (requires -lstdc++fs at link time).
-+#include <experimental/filesystem>
-+#define GLSLANG_FS_NS std::experimental::filesystem
-+#else
- #include <filesystem>
-+#define GLSLANG_FS_NS std::filesystem
-+#endif
+-#include <filesystem>
++// Kylin V10 aarch64 ships GCC 7.3.0 without <filesystem> and without a
++// standalone libstdc++fs. This helper replaces std::filesystem::absolute,
++// which glslang only uses for pretty-printing paths in diagnostics.
++#include <cstdlib>
  #include <cmath>
++namespace glslang {
++inline std::string glslangAbsolutePath(const std::string& path) {
++    char resolved[4096];
++    if (realpath(path.c_str(), resolved) != nullptr) return std::string(resolved);
++    return path;
++}
++} // namespace glslang
  
  namespace glslang {
-@@ -105,11 +113,11 @@
+ 
+@@ -105,11 +115,11 @@
          }
  
          if(loc.getFilename() == nullptr && shaderFileName != nullptr && absolute) {
 -            append(std::filesystem::absolute(shaderFileName).string());
-+            append(GLSLANG_FS_NS::absolute(shaderFileName).string());
++            append(glslang::glslangAbsolutePath(shaderFileName));
          } else {
              std::string location = loc.getStringNameOrNum(false);
              if (absolute) {
 -                append(std::filesystem::absolute(location).string());
-+                append(GLSLANG_FS_NS::absolute(location).string());
++                append(glslang::glslangAbsolutePath(location));
              } else {
                  append(location);
              }

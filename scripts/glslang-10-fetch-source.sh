@@ -76,7 +76,7 @@ gt_sha="$(fetch_tar googletest "${GLSLANG_SRC_DIR}/External/googletest" \
 
 # 应用可选补丁（B 设备 GCC7 兼容）；用 git apply 的 3-way/普通模式，幂等处理。
 if [[ -n "${GLSLANG_PATCH_REL:-}" ]]; then
-  if grep -q 'GLSLANG_FS_NS' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h"; then
+  if grep -q 'glslangAbsolutePath' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h"; then
     log "补丁已应用，跳过"
   else
     ( cd "$GLSLANG_SRC_DIR" && git apply --check "$PATCH" ) \
@@ -86,8 +86,8 @@ if [[ -n "${GLSLANG_PATCH_REL:-}" ]]; then
       || ( cd "$GLSLANG_SRC_DIR" && patch -p1 --forward < "$PATCH" ) \
       || die "补丁应用失败"
   fi
-  grep -q 'GLSLANG_FS_NS' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h" \
-    || die "补丁应用后仍缺少 GLSLANG_FS_NS 兼容层"
+  grep -q 'glslangAbsolutePath' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h" \
+    || die "补丁应用后仍缺少 glslangAbsolutePath 兼容层"
   log "已应用补丁 ${GLSLANG_PATCH_REL} (sha256=${PATCH_SHA_CONFIG})"
 fi
 
