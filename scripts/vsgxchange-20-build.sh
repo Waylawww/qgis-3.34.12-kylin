@@ -4,6 +4,10 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsgxchange.env"
+# B 设备前缀恢复（config/vsgxchange.env 会把依赖前缀覆盖为 A 设备 /opt 路径）
+[[ -n "${B_OSG2VSG_PREFIX:-}" ]] && OSG2VSG_PREFIX="$B_OSG2VSG_PREFIX"
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
+[[ -n "${B_ASSIMP_PREFIX:-}" ]] && ASSIMP_PREFIX="$B_ASSIMP_PREFIX"
 
 need_cmd python3 "构建"
 need_cmd objdump "ISA 校验"
@@ -31,9 +35,13 @@ locate_gcc_runtime() {
   return 1
 }
 GCC_LIBDIR="$(locate_gcc_runtime || true)"
-[[ -n "$GCC_LIBDIR" ]] || die "未找到 GCC11 libstdc++ 运行库"
-export LD_LIBRARY_PATH="${GCC_LIBDIR}:${LOCAL_PREFIX}/lib64:${OSG2VSG_PREFIX}/lib64:${ASSIMP_PREFIX}/lib64:${GLSLANG_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-log "GCC11 runtime: ${GCC_LIBDIR}"
+if [[ "${REQUIRE_GCC11:-true}" == "true" ]]; then
+  [[ -n "$GCC_LIBDIR" ]] || die "未找到 GCC11 libstdc++ 运行库"
+else
+  GCC_LIBDIR=''
+  log "REQUIRE_GCC11=false：使用系统 libstdc++，不打包私有运行库"
+fi
+export LD_LIBRARY_PATH="${GCC_LIBDIR:+${GCC_LIBDIR}:}${LOCAL_PREFIX}/lib64:${OSG2VSG_PREFIX}/lib64:${ASSIMP_PREFIX}/lib64:${GLSLANG_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 ASSIMP_CONFIG="$(find "$ASSIMP_PREFIX" -path '*/cmake/assimp/*' -name 'assimp*onfig.cmake' -print -quit 2>/dev/null || true)"
 if [[ -n "$ASSIMP_CONFIG" ]]; then
@@ -48,8 +56,14 @@ log "vsgXchange_assimp=${ASSIMP_OPT}"
 
 NINJA="$(command -v ninja || true)"
 if [[ -n "$NINJA" ]]; then GEN=( -G Ninja "-DCMAKE_MAKE_PROGRAM=$NINJA" ); else GEN=( -G "Unix Makefiles" ); fi
-: "${ISA_CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
-: "${ISA_CXXFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+if [[ "${TARGET_ARCH:-x86_64}" == "aarch64" ]]; then
+  : "${ISA_CFLAGS:=-march=armv8-a -O2 -pipe}"
+  : "${ISA_CXXFLAGS:=-march=armv8-a -O2 -pipe}"
+else
+  : "${ISA_CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+  : "${ISA_CXXFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+fi
+log "ISA: arch=${TARGET_ARCH:-x86_64} policy=${ISA_POLICY:-default} CFLAGS=${ISA_CFLAGS}"
 
 rm -rf "$BUILD"
 cmake "${GEN[@]}" -S "$VSGXCHANGE_SRC_DIR" -B "$BUILD" \
@@ -96,9 +110,11 @@ for f in "${GLSLANG_PREFIX}"/lib64/lib*.so.16; do
   cp -a "$f" "${STAGE_PREFIX}/lib64/" 2>/dev/null || true
 done
 cp -a "${OSG2VSG_PREFIX}/include/vulkan" "${STAGE_PREFIX}/include/" 2>/dev/null || true
-cp -L "${GCC_LIBDIR}/$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
-  "${STAGE_PREFIX}/lib64/" 2>/dev/null || cp -L "${GCC_LIBDIR}/libstdc++.so.6" "${STAGE_PREFIX}/lib64/"
-ln -sfn "$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" "${STAGE_PREFIX}/lib64/libstdc++.so.6"
+if [[ -n "$GCC_LIBDIR" ]]; then
+  cp -L "${GCC_LIBDIR}/$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
+    "${STAGE_PREFIX}/lib64/" 2>/dev/null || cp -L "${GCC_LIBDIR}/libstdc++.so.6" "${STAGE_PREFIX}/lib64/"
+  ln -sfn "$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" "${STAGE_PREFIX}/lib64/libstdc++.so.6"
+fi
 
 mkdir -p "${STAGE}/usr/bin"
 for exe in "${STAGE_PREFIX}"/bin/*; do
@@ -118,22 +134,27 @@ LIB="$(find "${LOCAL_PREFIX}/lib64" -maxdepth 1 -name 'libvsgXchange.so*' -print
 ldd_out="$(LD_LIBRARY_PATH="${LOCAL_PREFIX}/lib64" ldd "$LIB" 2>&1 || true)"
 printf '%s\n' "$ldd_out" > "${VSGXCHANGE_REPORT_DIR}/vsgxchange-ldd.txt"
 grep -q 'not found' <<<"$ldd_out" && die "libvsgXchange 依赖未闭合: $ldd_out"
-if objdump -d "$LIB" 2>/dev/null | grep -m1 -Eq '\bzmm[0-9]+\b'; then die "AVX-512 指令"; fi
+if [[ "${TARGET_ARCH:-x86_64}" == "x86_64" ]] \
+   && objdump -d "$LIB" 2>/dev/null | grep -m1 -Eq '\bzmm[0-9]+\b'; then
+  die "libvsgXchange 含 AVX-512 指令，违反 x86-64 baseline 策略"
+fi
 
+RPM_ARCH="${TARGET_ARCH:-x86_64}"
+RPM_TARGET_DESC="${TARGET_OS:-Kylin V10} / ${TARGET_CPU:-generic}"
 SPEC="${TOP}/SPECS/vsgxchange-kylin.spec"
 cat > "$SPEC" <<EOF
 Name:           vsgXchange
 Version:        ${VSGXCHANGE_VERSION}
 Release:        1.ky10.g76ee4f8
-Summary:        vsgXchange ${VSGXCHANGE_VERSION} native build for Kylin V10 x86_64
+Summary:        vsgXchange ${VSGXCHANGE_VERSION} native build for Kylin V10 ${RPM_ARCH}
 License:        MIT
 URL:            ${VSGXCHANGE_REPO}
-BuildArch:      x86_64
+BuildArch:      ${RPM_ARCH}
 AutoReqProv:    no
 %global __os_install_post %{nil}
 %description
 vsgXchange ${VSGXCHANGE_VERSION} (SOVERSION ${VSGXCHANGE_SOVERSION}) with private
-OSG/VSG, assimp and glslang runtimes, compiled natively on Kylin V10 / Hygon C86.
+OSG/VSG, assimp and glslang runtimes, compiled natively on ${RPM_TARGET_DESC}.
 %prep
 %build
 %install
@@ -150,12 +171,14 @@ cp -f "$SPEC" "${VSGXCHANGE_REPORT_DIR}/vsgxchange-kylin.spec"
 rpmbuild -ba --define "_topdir ${TOP}" --define "_smp_mflags -j1" "$SPEC" 2>&1 | tee "${LOG}/vsgxchange-rpmbuild.log"
 find "${TOP}/RPMS" -name '*.rpm' -type f -exec cp -f {} "${VSGXCHANGE_OUT_DIR}/rpms/" \;
 
-python3 - "${VSGXCHANGE_REPORT_DIR}" "${CTEST_RC}" "${VSGXCHANGE_OUT_DIR}" <<'PY'
+python3 - "${VSGXCHANGE_REPORT_DIR}" "${CTEST_RC}" "${VSGXCHANGE_OUT_DIR}" \
+        "${TARGET_ARCH:-x86_64}" "${ISA_POLICY:-x86-64-baseline}" <<'PY'
 import glob, json, os, sys
-rep, ctest, out = sys.argv[1:4]
+rep, ctest, out, arch, isa = sys.argv[1:6]
 data={'stage':'VSGXCHANGE_STAGE_2_NATIVE_BUILD','ctest_exit_code':int(ctest),
       'rpms':[os.path.basename(p) for p in sorted(glob.glob(os.path.join(out,'rpms','vsgXchange*.rpm')))],
-      'isa_policy':'x86-64-baseline','ldd_clean':True,'no_avx512':True,'verdict':'PASS'}
+      'arch':arch,'isa_policy':isa,'ldd_clean':True,
+      'no_avx512': True if arch=='x86_64' else 'n/a (aarch64)','verdict':'PASS'}
 with open(os.path.join(rep,'vsgxchange-build.json'),'w',encoding='utf-8') as f:
     json.dump(data,f,indent=2); f.write('\n')
 print(json.dumps(data,indent=2))

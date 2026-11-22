@@ -4,6 +4,10 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsgxchange.env"
+# B 设备前缀恢复（config/vsgxchange.env 会把依赖前缀覆盖为 A 设备 /opt 路径）
+[[ -n "${B_OSG2VSG_PREFIX:-}" ]] && OSG2VSG_PREFIX="$B_OSG2VSG_PREFIX"
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
+[[ -n "${B_ASSIMP_PREFIX:-}" ]] && ASSIMP_PREFIX="$B_ASSIMP_PREFIX"
 
 require_linux_or_container
 [[ "$(id -u)" -ne 0 ]] || die "拒绝以 root 身份编译"
@@ -44,7 +48,7 @@ data = {'stage':'VSGXCHANGE_STAGE_0_PREFLIGHT','version':version,'commit':commit
         'glslang_config':glslang,'assimp_config':assimp,'os_release':os_release,
         'host':platform.node(),'arch':platform.machine(),
         'user':os.popen('id -un').read().strip(),'free_gb':int(free_gb),
-        'isa_policy':'x86-64-baseline','verdict':'PASS',
+        'isa_policy':('aarch64-armv8a-baseline' if platform.machine()=='aarch64' else 'x86-64-baseline'),'verdict':'PASS',
         'recorded_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
 with open(os.path.join(rep,'vsgxchange-environment.json'),'w',encoding='utf-8') as f:
     json.dump(data,f,ensure_ascii=False,indent=2); f.write('\n')

@@ -4,12 +4,29 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsgxchange.env"
+# B 设备前缀恢复（config/vsgxchange.env 会把依赖前缀覆盖为 A 设备 /opt 路径）
+[[ -n "${B_OSG2VSG_PREFIX:-}" ]] && OSG2VSG_PREFIX="$B_OSG2VSG_PREFIX"
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
+[[ -n "${B_ASSIMP_PREFIX:-}" ]] && ASSIMP_PREFIX="$B_ASSIMP_PREFIX"
 
 RPM="$(find "${VSGXCHANGE_OUT_DIR}/rpms" -maxdepth 1 -name 'vsgXchange-*.rpm' ! -name '*.src.rpm' -type f | sort | head -n1)"
 [[ -n "$RPM" ]] || die "未找到 vsgXchange 二进制 RPM"
 EVID="${VSGXCHANGE_REPORT_DIR}/install-selftest"
 mkdir -p "$EVID"
 echo "runner=$(id -un) rpm=$RPM"
+
+# api_smoke 优先用注入的新版 cmake（B 设备系统 cmake 3.16 可能过低）。
+SMOKE_CMAKE="${VSGXCHANGE_CMAKE:-}"
+if [[ -z "$SMOKE_CMAKE" ]] || ! "$SMOKE_CMAKE" --version 2>/dev/null | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+  SMOKE_CMAKE="$(command -v cmake)"
+  for bc in "${DEPS_PREFIX:-}/bin/cmake" "${B_GLSLANG_PREFIX%/opt/*}/tools"/cmake-*/bin/cmake; do
+    [[ -x "$bc" ]] || continue
+    if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+      SMOKE_CMAKE="$bc"; break
+    fi
+  done
+fi
+log "api_smoke cmake: ${SMOKE_CMAKE} ($(${SMOKE_CMAKE} --version | head -n1))"
 
 INSTALLER=/usr/local/sbin/vsgxchange-ci-install
 INSTALL_MODE="rpm-extract"
@@ -89,13 +106,13 @@ int main() {
     return 0;
 }
 EOF
-  cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
+  "$SMOKE_CMAKE" -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="${PFX};${OSG2VSG_PREFIX};${ASSIMP_PREFIX};${GLSLANG_PREFIX}" \
     -DvsgXchange_DIR="${LIBDIR}/cmake/vsgXchange" \
     -Dvsg_DIR="${OSG2VSG_PREFIX}/lib64/cmake/vsg" \
     -DVulkan_INCLUDE_DIR="${OSG2VSG_PREFIX}/include" \
     -DVulkan_LIBRARY=/usr/lib64/libvulkan.so
-  cmake --build "$d/build" --parallel 2
+  "$SMOKE_CMAKE" --build "$d/build" --parallel 2
   LD_LIBRARY_PATH="${LIBDIR}:${OSG2VSG_PREFIX}/lib64:${ASSIMP_PREFIX}/lib64:${GLSLANG_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "$d/build/smoke"
 }
@@ -126,7 +143,7 @@ mandatory = ('package_contents', 'installed_files', 'cli_version', 'api_smoke', 
 if mode == 'system-rpm': mandatory += ('rpm_installed',)
 failed = [k for k in mandatory if checks.get(k) != 'PASS']
 report = {'stage': 'VSGXCHANGE_STAGE_3_INSTALL_AND_SELFTEST',
-          'environment': 'self-hosted Kylin V10 / x86_64 / Hygon C86',
+          'environment': 'self-hosted runner host, Kylin V10 / %s' % os.uname().machine,
           'vsgXchange_version': version, 'install_mode': mode,
           'checks': checks, 'failed_checks': failed,
           'verdict': 'PASS' if not failed else 'FAIL'}
