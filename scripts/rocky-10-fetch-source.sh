@@ -103,6 +103,15 @@ for dirpath, _, names in os.walk(root):
         out = out.replace('std::filesystem::', 'std::experimental::filesystem::')
         out = out.replace('namespace std { namespace filesystem',
                           'namespace std { namespace experimental { namespace filesystem')
+        # GCC7 experimental filesystem::path 缺少 lexically_normal()，两处用例
+        # （GDAL 的 .prj 路径 / VSG 搜索路径）去掉该调用后语义仍成立。
+        out = out.replace('.lexically_normal()', '')
+        # TMS.cpp/URI.cpp 原靠传递包含获得 std::filesystem，需显式补 experimental 头。
+        if 'std::experimental::filesystem::' in out and '#include <experimental/filesystem>' not in out:
+            lines = out.splitlines(keepends=True)
+            idx = next((i for i, l in enumerate(lines) if l.lstrip().startswith('#include')), 0)
+            lines.insert(idx, '#include <experimental/filesystem>\n')
+            out = ''.join(lines)
         if out != src:
             with open(p, 'w', encoding='utf-8', errors='surrogateescape') as f:
                 f.write(out)
@@ -153,15 +162,17 @@ ensure_libstdcxxfs() {
 apply_fs_compat() {
   [[ "${ROCKY_FS_COMPAT:-}" == "experimental" ]] || return 0
   local stamp="${ROCKY_WORK}/.fs-compat-ready"
-  if [[ -f "$stamp" && "$(cat "$stamp")" == "$ROCKY_FS_COMPAT" \
+  local sig="${ROCKY_FS_COMPAT}:${ROCKY_FS_PATCH_REV:-1}"
+  if [[ -f "$stamp" && "$(cat "$stamp")" == "$sig" \
       && -f "${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a" ]] \
-     && grep -q 'experimental/filesystem' "${ROCKY_SRC_DIR}/src/rocky/GDAL.cpp" 2>/dev/null; then
+     && grep -q 'experimental/filesystem' "${ROCKY_SRC_DIR}/src/rocky/GDAL.cpp" 2>/dev/null \
+     && ! grep -q 'lexically_normal' "${ROCKY_SRC_DIR}/src/rocky/GDAL.cpp" 2>/dev/null; then
     log "filesystem 兼容补丁已应用（缓存）"
     return 0
   fi
   patch_filesystem
   ensure_libstdcxxfs
-  printf '%s\n' "$ROCKY_FS_COMPAT" > "$stamp"
+  printf '%s\n' "$sig" > "$stamp"
 }
 
 HTTPLIB_COMPAT_TAG=openssl111-v1
