@@ -1,0 +1,128 @@
+name: osg2vsg 0.4.0 · Native Kylin V10 aarch64 RPM (B device)
+
+# 与 QGIS/glslang/assimp B 设备共用同一台 self-hosted runner。
+# 源码 = 官方固定 commit（osg2vsg / OSG / VSG / Vulkan-Headers），与 A 设备一致。
+# 依赖链：OSG 3.6.5 + VSG 1.1.13 + Vulkan + 可选 B 设备 glslang，全部原生编译。
+on:
+  push:
+    branches: [feat/b-osg2vsg-arm64]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'preflight / source / build / install / all'
+        type: choice
+        options: [preflight, source, build, install, all]
+        default: all
+      build_jobs:
+        description: '并行编译任务数'
+        default: '6'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osg2vsg-native-b-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: ${{ github.event.inputs.stage || 'all' }}
+  OSG2VSG_BUILD_JOBS: ${{ github.event.inputs.build_jobs || '6' }}
+
+jobs:
+  native-build:
+    name: Native osg2vsg build on Kylin V10 aarch64 B device
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: [self-hosted, Linux, ARM64, kylin-v10-b-arm64, qgis-build]
+    timeout-minutes: 480
+    steps:
+      - name: Runner identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "user=$(id -un) uid=$(id -u) groups=$(id -Gn)"
+          echo "host=$(hostname) kernel=$(uname -r) arch=$(uname -m)"
+          [[ "$(uname -m)" == "aarch64" ]] || { echo "::error::not aarch64"; exit 1; }
+          [[ "$(id -u)" -ne 0 ]] || { echo "::error::refusing to build as root"; exit 1; }
+          grep -E '^(ID|VERSION_ID|PRETTY_NAME)=' /etc/os-release || true
+
+      - name: Checkout trusted branch via ghproxy
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: 'url.https://ghproxy.net/https://github.com/.insteadOf'
+          GIT_CONFIG_VALUE_0: 'https://github.com/'
+        run: |
+          set -euo pipefail
+          D="${GITHUB_WORKSPACE}/osg2vsg-b-arm64-repo"
+          rm -rf "$D"
+          for i in 1 2 3 4 5; do
+            if git clone --depth=1 --branch "${GITHUB_REF_NAME}" \
+                 "https://github.com/Waylawww/qgis-3.34.12-kylin.git" "$D"; then break; fi
+            echo "git clone failed ($i/5), retry..."
+            rm -rf "$D"; sleep $((i * 5))
+          done
+          [[ -d "$D/.git" ]] || { echo "FATAL: git clone failed after retries"; exit 1; }
+          echo "REPO_ROOT=$D" >> "$GITHUB_ENV"
+          git -C "$D" --no-pager log -1 --oneline
+
+      - name: Prepare persistent directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$(cd "${GITHUB_WORKSPACE}/.." && pwd)"
+          export OSG2VSG_WORK="$BASE/_b-osg2vsg-040-work"
+          export OSG2VSG_OUT_DIR="$BASE/_b-osg2vsg-040-out"
+          export OSG2VSG_REPORT_DIR="$BASE/_b-osg2vsg-040-reports"
+          export DEPS_PREFIX="$BASE/_b-qgis-334-deps"
+          export BUILD_ENV="$REPO_ROOT/config/osg2vsg-b-arm64.env"
+          mkdir -p "$OSG2VSG_WORK" "$OSG2VSG_OUT_DIR/rpms" \
+                   "$OSG2VSG_REPORT_DIR/logs" "$DEPS_PREFIX"
+          {
+            echo "BUILD_ENV=$BUILD_ENV"
+            echo "OSG2VSG_WORK=$OSG2VSG_WORK"
+            echo "OSG2VSG_OUT_DIR=$OSG2VSG_OUT_DIR"
+            echo "OSG2VSG_REPORT_DIR=$OSG2VSG_REPORT_DIR"
+            echo "DEPS_PREFIX=$DEPS_PREFIX"
+          } >> "$GITHUB_ENV"
+          echo "toolchain: $(g++ --version | head -n1)"
+          echo "cmake: $(cmake --version | head -n1)"
+          df -h "$BASE"; free -h
+
+      - name: Native build / install / test entrypoint
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$REPO_ROOT"
+          bash scripts/osg2vsg-native-build.sh 2>&1 | tee "$OSG2VSG_REPORT_DIR/logs/osg2vsg-native-build.log"
+
+      - name: Failure tail (fast triage)
+        if: failure()
+        shell: bash
+        run: |
+          echo '===== osg2vsg-native-build.log tail ====='
+          tail -n 200 "$OSG2VSG_REPORT_DIR/logs/osg2vsg-native-build.log" 2>/dev/null || true
+          echo '===== osg2vsg build log tail ====='
+          tail -n 120 "$OSG2VSG_REPORT_DIR/logs/osg2vsg-20-build.sh.log" 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osg2vsg-b-arm64-evidence-${{ github.run_number }}-${{ github.event.inputs.stage || 'all' }}
+          path: ${{ env.OSG2VSG_REPORT_DIR }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload RPM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osg2vsg-b-arm64-rpm-${{ github.run_number }}
+          path: ${{ env.OSG2VSG_OUT_DIR }}/rpms/*.rpm
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 90
