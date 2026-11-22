@@ -15,14 +15,20 @@ echo "runner=$(id -un) rpm=$RPM"
 VSG_DEP_PREFIX="${B_VSG_PREFIX:-/opt/osg2vsg-0.4.0}"
 GLSLANG_DEP_PREFIX="${B_GLSLANG_PREFIX:-/opt/glslang-16.1.0}"
 
-# api_smoke 需要 cmake >= 3.21（rocky 上游要求）；优先用自举的新版 cmake。
-SMOKE_CMAKE="$(command -v cmake)"
-for bc in "${DEPS_PREFIX:-}/bin/cmake" "${B_GLSLANG_PREFIX%/opt/*}/tools"/cmake-*/bin/cmake; do
-  [[ -x "$bc" ]] || continue
-  if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
-    SMOKE_CMAKE="$bc"; break
-  fi
-done
+# api_smoke 需要 cmake >= 3.21（rocky 上游要求）。入口脚本已通过 ROCKY_CMAKE
+# 注入 workflow 探测到的自举 cmake 3.31.6，优先使用它；否则再本地探测。
+SMOKE_CMAKE="${ROCKY_CMAKE:-}"
+if [[ -z "$SMOKE_CMAKE" ]] || ! "$SMOKE_CMAKE" --version 2>/dev/null | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+  SMOKE_CMAKE="$(command -v cmake)"
+  for bc in "${DEPS_PREFIX:-}/bin/cmake" \
+            "${B_GLSLANG_PREFIX%/opt/*}/tools"/cmake-*/bin/cmake \
+            "${B_GLSLANG_PREFIX%/local-install/*}/tools"/cmake-*/bin/cmake; do
+    [[ -x "$bc" ]] || continue
+    if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+      SMOKE_CMAKE="$bc"; break
+    fi
+  done
+fi
 log "api_smoke cmake: ${SMOKE_CMAKE} ($(${SMOKE_CMAKE} --version | head -n1))"
 
 INSTALLER=/usr/local/sbin/rocky-ci-install
