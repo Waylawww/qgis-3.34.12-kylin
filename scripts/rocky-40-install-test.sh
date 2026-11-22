@@ -94,7 +94,13 @@ int main() {
     return 0;
 }
 EOF
+  local fs_args=()
+  if [[ "${ROCKY_FS_COMPAT:-}" == "experimental" \
+        && -f "${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a" ]]; then
+    fs_args=("-DCMAKE_CXX_STANDARD_LIBRARIES=${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a")
+  fi
   "$SMOKE_CMAKE" -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
+    "${fs_args[@]}" \
     -DCMAKE_PREFIX_PATH="${PFX};${ROCKY_DEPS_PREFIX};${VSG_DEP_PREFIX};${GLSLANG_DEP_PREFIX};${VULKAN_SDK_PREFIX}" \
     -Drocky_DIR="${LIBDIR}/cmake/rocky" \
     -Dglm_DIR="${PFX}/lib/cmake/glm" \

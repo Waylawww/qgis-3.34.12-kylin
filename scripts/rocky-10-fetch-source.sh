@@ -83,6 +83,87 @@ edit(src_cmake_path, [(
 PY
 }
 
+# GCC7 (Kylin V10) 无 <filesystem>，但有 <experimental/filesystem>。
+# 将 rocky 源码中的 std::filesystem 映射到 std::experimental::filesystem。
+patch_filesystem() {
+  [[ "${ROCKY_FS_COMPAT:-}" == "experimental" ]] || return 0
+  log "patch filesystem -> std::experimental::filesystem (GCC7 compat)"
+  python3 - "${ROCKY_SRC_DIR}/src" <<'PY'
+import os, sys
+root = sys.argv[1]
+changed = 0
+for dirpath, _, names in os.walk(root):
+    for name in names:
+        if not name.endswith(('.h', '.hpp', '.hh', '.cpp', '.cc', '.cxx')):
+            continue
+        p = os.path.join(dirpath, name)
+        with open(p, encoding='utf-8', errors='surrogateescape') as f:
+            src = f.read()
+        out = src.replace('#include <filesystem>', '#include <experimental/filesystem>')
+        out = out.replace('std::filesystem::', 'std::experimental::filesystem::')
+        out = out.replace('namespace std { namespace filesystem',
+                          'namespace std { namespace experimental { namespace filesystem')
+        if out != src:
+            with open(p, 'w', encoding='utf-8', errors='surrogateescape') as f:
+                f.write(out)
+            changed += 1
+            print('patched fs: ' + os.path.relpath(p, root))
+print('filesystem patched files: %d' % changed)
+PY
+}
+
+# 从 yum 源下载 libstdc++-static RPM，解包出 libstdc++fs.a 到私有前缀。
+# 不修改系统、无需 root。experimental::filesystem 需要该静态库。
+ensure_libstdcxxfs() {
+  [[ "${ROCKY_FS_COMPAT:-}" == "experimental" ]] || return 0
+  local dest="${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a"
+  if [[ -f "$dest" ]]; then
+    log "libstdc++fs.a cached: $dest"
+    return 0
+  fi
+  need_cmd curl "下载 libstdc++-static"
+  need_cmd rpm2cpio "解包 libstdc++-static"
+  need_cmd cpio "解包 libstdc++-static"
+  local url=""
+  if command -v repoquery >/dev/null 2>&1; then
+    url="$(repoquery --location libstdc++-static 2>/dev/null | head -n1)"
+  fi
+  if [[ -z "$url" ]] && command -v dnf >/dev/null 2>&1; then
+    url="$(dnf repoquery --location libstdc++-static 2>/dev/null | head -n1)"
+  fi
+  if [[ -z "$url" ]] && command -v yumdownloader >/dev/null 2>&1; then
+    url="$(yumdownloader --url --resolve libstdc++-static 2>/dev/null | head -n1)"
+  fi
+  [[ -n "$url" ]] || die "无法定位 libstdc++-static RPM（repoquery/yumdownloader 均无结果）"
+  log "libstdc++-static RPM: $url"
+  local rpmf="${ROCKY_WORK}/libstdc++-static.rpm" ex="${ROCKY_WORK}/libstdcxxfs-extract"
+  curl -fL --retry 4 --retry-delay 3 --connect-timeout 20 -o "$rpmf" "$url" \
+    || die "下载 libstdc++-static 失败"
+  rm -rf "$ex"; mkdir -p "$ex"
+  ( cd "$ex" && rpm2cpio "$rpmf" | cpio -idm --quiet ) || die "解包 libstdc++-static 失败"
+  local found
+  found="$(find "$ex" -name 'libstdc++fs.a' -type f -print -quit)"
+  [[ -n "$found" ]] || die "libstdc++-static RPM 中无 libstdc++fs.a"
+  mkdir -p "${ROCKY_DEPS_PREFIX}/lib" "${ROCKY_DEPS_PREFIX}/lib64"
+  cp -f "$found" "${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a"
+  cp -f "$found" "${ROCKY_DEPS_PREFIX}/lib64/libstdc++fs.a"
+  log "installed libstdc++fs.a sha256=$(sha256sum "$found" | awk '{print $1}')"
+}
+
+apply_fs_compat() {
+  [[ "${ROCKY_FS_COMPAT:-}" == "experimental" ]] || return 0
+  local stamp="${ROCKY_WORK}/.fs-compat-ready"
+  if [[ -f "$stamp" && "$(cat "$stamp")" == "$ROCKY_FS_COMPAT" \
+      && -f "${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a" ]] \
+     && grep -q 'experimental/filesystem' "${ROCKY_SRC_DIR}/src/rocky/GDAL.cpp" 2>/dev/null; then
+    log "filesystem 兼容补丁已应用（缓存）"
+    return 0
+  fi
+  patch_filesystem
+  ensure_libstdcxxfs
+  printf '%s\n' "$ROCKY_FS_COMPAT" > "$stamp"
+}
+
 HTTPLIB_COMPAT_TAG=openssl111-v1
 SIG="${ROCKY_COMMIT}|${VULKAN_HEADERS_COMMIT}|${GLM_TAG}|${SPDLOG_TAG}|${NLOHMANN_JSON_TAG}|${CPP_HTTPLIB_TAG}|${ENTT_TAG}|${HTTPLIB_COMPAT_TAG}"
 STAMP="${ROCKY_WORK}/.source-ready"
@@ -103,6 +184,7 @@ if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -n "$ENTT_CONFIG" ]]; then
   log "复用已缓存源码与依赖"
   patch_no_imgui
+  apply_fs_compat
   stage_marker ROCKY_STAGE_1_SOURCE_OK PASS "${ROCKY_REPORT_DIR}/rocky-source-ok.json"
   info "ROCKY SOURCE PASS (cached)"; exit 0
 fi
@@ -130,6 +212,7 @@ main_sha="$(fetch_tar rocky "$ROCKY_SRC_DIR" 'pelicanmapping/rocky' "$ROCKY_COMM
 grep -q 'VERSION 1.0.2' "${ROCKY_SRC_DIR}/CMakeLists.txt" || die "Rocky 版本不符"
 grep -q 'PROJECT_VERSION_ABI 46' "${ROCKY_SRC_DIR}/CMakeLists.txt" || die "Rocky ABI 不符"
 patch_no_imgui
+apply_fs_compat
 
 vulkan_sha="$(fetch_tar vulkan-headers "$VULKAN_HEADERS_SRC_DIR" 'KhronosGroup/Vulkan-Headers' "$VULKAN_HEADERS_COMMIT")"
 grep -q '#define VK_HEADER_VERSION 268' "${VULKAN_HEADERS_SRC_DIR}/include/vulkan/vulkan_core.h" \

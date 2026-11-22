@@ -86,6 +86,25 @@ cat > "$VULKAN_FIRST" <<EOF
 include_directories(BEFORE "${VULKAN_SDK_PREFIX}/include")
 EOF
 
+# GCC7 filesystem compat: std::experimental::filesystem 需要私有 libstdc++fs.a。
+FS_STD_LIBS=()
+FS_STATIC="${ROCKY_DEPS_PREFIX}/lib/libstdc++fs.a"
+if [[ "${ROCKY_FS_COMPAT:-}" == "experimental" ]]; then
+  [[ -f "$FS_STATIC" ]] || die "缺少 ${FS_STATIC}，请先运行 source 阶段"
+  FS_STD_LIBS=("-DCMAKE_CXX_STANDARD_LIBRARIES=${FS_STATIC}")
+  log "GCC7 filesystem compat: linking ${FS_STATIC}"
+fi
+
+# 配置签名：flags / compat 库 / cmake 变化时清理陈旧缓存（避免旧的 CXX_STANDARD_LIBRARIES）。
+CFG_SIG="${ISA_CFLAGS}|${ISA_CXXFLAGS}|${ROCKY_FS_COMPAT:-none}|${FS_STATIC}|${CMAKE_BIN}"
+SIG_FILE="${BUILD}/.rocky-config-sig"
+mkdir -p "$BUILD"
+if [[ -f "$BUILD/CMakeCache.txt" && ( ! -f "$SIG_FILE" || "$(cat "$SIG_FILE")" != "$CFG_SIG" ) ]]; then
+  rm -f "$BUILD/CMakeCache.txt"
+  log "配置签名变化，已删除旧 CMakeCache.txt"
+fi
+printf '%s\n' "$CFG_SIG" > "$SIG_FILE"
+
 PREFIX_PATH="${ROCKY_DEPS_PREFIX};${DEPS_PREFIX:-};${VSG_DEP_PREFIX};${GLSLANG_DEP_PREFIX};${VULKAN_SDK_PREFIX}"
 "$CMAKE_BIN" "${GEN[@]}" -S "$ROCKY_SRC_DIR" -B "$BUILD" \
   -DCMAKE_PROJECT_INCLUDE="$VULKAN_FIRST" \
@@ -108,6 +127,7 @@ PREFIX_PATH="${ROCKY_DEPS_PREFIX};${DEPS_PREFIX:-};${VSG_DEP_PREFIX};${GLSLANG_D
   -DROCKY_SUPPORTS_AZURE="${ROCKY_SUPPORTS_AZURE}" \
   -DROCKY_SUPPORTS_BING="${ROCKY_SUPPORTS_BING}" \
   "-DCMAKE_C_FLAGS=${ISA_CFLAGS}" "-DCMAKE_CXX_FLAGS=${ISA_CXXFLAGS}" \
+  "${FS_STD_LIBS[@]}" \
   2>&1 | tee "${LOG}/rocky-cmake-config.log"
 "$CMAKE_BIN" --build "$BUILD" --parallel "$JOBS" 2>&1 | tee "${LOG}/rocky-build.log"
 
