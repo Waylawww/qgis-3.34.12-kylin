@@ -80,6 +80,16 @@ shader_compile() {
 
 cmake_api_smoke() {
   local d="${EVID}/cmake-smoke"
+  # B 设备系统 cmake 3.16 过低；优先用构建阶段自举的 cmake（>=3.29）。
+  local smoke_cmake="$(command -v cmake)"
+  local bc
+  for bc in "${GLSLANG_WORK}/tools"/cmake-*/bin/cmake "${DEPS_PREFIX:-}/bin/cmake"; do
+    [[ -x "$bc" ]] || continue
+    if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[2-9]|[3-9][0-9])'; then
+      smoke_cmake="$bc"; break
+    fi
+  done
+  log "cmake_api_smoke 使用 cmake: ${smoke_cmake} ($(${smoke_cmake} --version | head -n1))"
   rm -rf "$d"; mkdir -p "$d"
   cat > "$d/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.22)
@@ -98,8 +108,8 @@ int main() {
     return 0;
 }
 EOF
-  cmake -S "$d" -B "$d/build" -DCMAKE_PREFIX_PATH="$PFX" -DCMAKE_BUILD_TYPE=Release
-  cmake --build "$d/build" --parallel 2
+  "$smoke_cmake" -S "$d" -B "$d/build" -DCMAKE_PREFIX_PATH="$PFX" -DCMAKE_BUILD_TYPE=Release
+  "$smoke_cmake" --build "$d/build" --parallel 2
   LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$d/build/smoke"
 }
 
