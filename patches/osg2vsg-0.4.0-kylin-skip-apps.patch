@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -56,4 +56,7 @@
+ # src directory contains all the example applications etc.
+ add_subdirectory(src/osg2vsg)
+ add_subdirectory(src/osgPlugins/vsg)
+-add_subdirectory(applications)
++# B device aarch64/GCC7: example applications fail to link against
++# VSG 1.1.13 (undefined vsg::ref_ptr<vsg::Duplicate>::ref_ptr()).
++# They are not part of the library deliverable; skip them.
++# add_subdirectory(applications)

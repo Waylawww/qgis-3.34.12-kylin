@@ -8,7 +8,17 @@ source "${REPO_ROOT}/config/osg2vsg.env"
 need_cmd curl "源码下载"; need_cmd tar "源码解压"
 log "== 阶段 1 / FETCH OSG2VSG ${OSG2VSG_VERSION} + OSG ${OSG_VERSION} + VSG ${VSG_VERSION} =="
 
-SIG="v3|${OSG2VSG_COMMIT}|${OSG_COMMIT}|${VSG_COMMIT}|${VULKAN_HEADERS_COMMIT}"
+# 可选源码补丁（B 设备跳过 applications；A 设备未配置则跳过）
+PATCH_SHA_CONFIG=''
+if [[ -n "${OSG2VSG_PATCH_REL:-}" ]]; then
+  PATCH="${REPO_ROOT}/${OSG2VSG_PATCH_REL}"
+  [[ -f "$PATCH" ]] || die "缺少补丁 ${OSG2VSG_PATCH_REL}"
+  PATCH_SHA_CONFIG="$(sha256sum "$PATCH" | awk '{print $1}')"
+  [[ "$PATCH_SHA_CONFIG" == "${OSG2VSG_PATCH_SHA256:-}" ]] \
+    || die "补丁指纹不符：期望 ${OSG2VSG_PATCH_SHA256}，实际 ${PATCH_SHA_CONFIG}"
+fi
+
+SIG="v4|${OSG2VSG_COMMIT}|${OSG_COMMIT}|${VSG_COMMIT}|${VULKAN_HEADERS_COMMIT}|${PATCH_SHA_CONFIG}"
 STAMP="${OSG2VSG_WORK}/.source-ready"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -f "${OSG2VSG_SRC_DIR}/CMakeLists.txt" \
@@ -53,10 +63,27 @@ grep -q 'VERSION 0.4.0' "${OSG2VSG_SRC_DIR}/CMakeLists.txt" || die "osg2vsg 版�
 grep -qi 'SET(OPENSCENEGRAPH_MAJOR_VERSION 3)' "${OSG_SRC_DIR}/CMakeLists.txt" || die "OSG 版本不符"
 grep -q 'find_package(Vulkan' "${VSG_SRC_DIR}/CMakeLists.txt" || die "VSG 源码不完整"
 
-python3 - "${OSG2VSG_REPORT_DIR}" "${m}" "${o}" "${v}" "${vh}" <<'PY'
+# 应用可选补丁（B 设备跳过 applications），幂等处理。
+if [[ -n "${OSG2VSG_PATCH_REL:-}" ]]; then
+  if grep -q 'skip them' "${OSG2VSG_SRC_DIR}/CMakeLists.txt"; then
+    log "补丁已应用，跳过"
+  else
+    ( cd "$OSG2VSG_SRC_DIR" && git apply --check "$PATCH" ) \
+      || ( cd "$OSG2VSG_SRC_DIR" && patch -p1 --dry-run --forward < "$PATCH" ) \
+      || die "补丁 ${OSG2VSG_PATCH_REL} 无法应用"
+    ( cd "$OSG2VSG_SRC_DIR" && git apply "$PATCH" ) \
+      || ( cd "$OSG2VSG_SRC_DIR" && patch -p1 --forward < "$PATCH" ) \
+      || die "补丁应用失败"
+  fi
+  grep -q 'skip them' "${OSG2VSG_SRC_DIR}/CMakeLists.txt" \
+    || die "补丁应用后仍未跳过 applications"
+  log "已应用补丁 ${OSG2VSG_PATCH_REL} (sha256=${PATCH_SHA_CONFIG})"
+fi
+
+python3 - "${OSG2VSG_REPORT_DIR}" "${m}" "${o}" "${v}" "${vh}" "${PATCH_SHA_CONFIG}" <<'PY'
 import json, os, sys
-rep, m, o, v, vh = sys.argv[1:6]
-data={'stage':'OSG2VSG_STAGE_1_SOURCE','sha256':{'osg2vsg':m,'osg':o,'vsg':v,'vulkan_headers':vh},'verdict':'PASS'}
+rep, m, o, v, vh, patch_sha = sys.argv[1:7]
+data={'stage':'OSG2VSG_STAGE_1_SOURCE','sha256':{'osg2vsg':m,'osg':o,'vsg':v,'vulkan_headers':vh,'patch':patch_sha},'verdict':'PASS'}
 with open(os.path.join(rep,'osg2vsg-source.json'),'w',encoding='utf-8') as f:
     json.dump(data,f,indent=2); f.write('\n')
 print(json.dumps(data,indent=2))
