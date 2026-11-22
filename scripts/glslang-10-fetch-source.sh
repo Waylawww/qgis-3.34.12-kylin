@@ -9,8 +9,18 @@ need_cmd curl "源码下载"
 need_cmd tar  "源码解压"
 log "== 阶段 1 / FETCH GLSLANG ${GLSLANG_VERSION} (${GLSLANG_TAG}) =="
 
-# main-tot 是移动 tag，必须按固定 commit 归档下载；v2 后缀用于让旧缓存失效。
-SIG="v2-by-commit|${GLSLANG_VERSION}|${GLSLANG_COMMIT}|${SPIRV_TOOLS_COMMIT}|${SPIRV_HEADERS_COMMIT}|${GOOGLETEST_COMMIT}"
+# 可选源码补丁（B 设备 GCC7 兼容用；A 设备未配置则跳过）
+PATCH_SHA_CONFIG=''
+if [[ -n "${GLSLANG_PATCH_REL:-}" ]]; then
+  PATCH="${REPO_ROOT}/${GLSLANG_PATCH_REL}"
+  [[ -f "$PATCH" ]] || die "缺少补丁 ${GLSLANG_PATCH_REL}"
+  PATCH_SHA_CONFIG="$(sha256sum "$PATCH" | awk '{print $1}')"
+  [[ "$PATCH_SHA_CONFIG" == "${GLSLANG_PATCH_SHA256:-}" ]] \
+    || die "补丁指纹不符：期望 ${GLSLANG_PATCH_SHA256}，实际 ${PATCH_SHA_CONFIG}"
+fi
+
+# main-tot 是移动 tag，必须按固定 commit 归档下载；SIG 含补丁 SHA，补丁变更会触发重取。
+SIG="v3-by-commit|${GLSLANG_VERSION}|${GLSLANG_COMMIT}|${SPIRV_TOOLS_COMMIT}|${SPIRV_HEADERS_COMMIT}|${GOOGLETEST_COMMIT}|${PATCH_SHA_CONFIG}"
 STAMP="${GLSLANG_WORK}/.source-ready"
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$SIG" \
    && -f "${GLSLANG_SRC_DIR}/CMakeLists.txt" \
@@ -64,13 +74,30 @@ gt_sha="$(fetch_tar googletest "${GLSLANG_SRC_DIR}/External/googletest" \
 [[ -d "${GLSLANG_SRC_DIR}/External/spirv-tools/external/spirv-headers/include" ]] || die "SPIRV-Headers 目录不完整"
 [[ -f "${GLSLANG_SRC_DIR}/External/googletest/CMakeLists.txt" ]] || die "googletest 缺少 CMakeLists.txt"
 
+# 应用可选补丁（B 设备 GCC7 兼容）；用 git apply 的 3-way/普通模式，幂等处理。
+if [[ -n "${GLSLANG_PATCH_REL:-}" ]]; then
+  if grep -q 'GLSLANG_FS_NS' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h"; then
+    log "补丁已应用，跳过"
+  else
+    ( cd "$GLSLANG_SRC_DIR" && git apply --check "$PATCH" ) \
+      || ( cd "$GLSLANG_SRC_DIR" && patch -p1 --dry-run --forward < "$PATCH" ) \
+      || die "补丁 ${GLSLANG_PATCH_REL} 无法应用"
+    ( cd "$GLSLANG_SRC_DIR" && git apply "$PATCH" ) \
+      || ( cd "$GLSLANG_SRC_DIR" && patch -p1 --forward < "$PATCH" ) \
+      || die "补丁应用失败"
+  fi
+  grep -q 'GLSLANG_FS_NS' "${GLSLANG_SRC_DIR}/glslang/Include/InfoSink.h" \
+    || die "补丁应用后仍缺少 GLSLANG_FS_NS 兼容层"
+  log "已应用补丁 ${GLSLANG_PATCH_REL} (sha256=${PATCH_SHA_CONFIG})"
+fi
+
 python3 - "${GLSLANG_REPORT_DIR}" "${GLSLANG_VERSION}" "${GLSLANG_TAG}" "${GLSLANG_COMMIT}" \
-          "${main_sha}" "${st_sha}" "${sh_sha}" "${gt_sha}" <<'PY'
+          "${main_sha}" "${st_sha}" "${sh_sha}" "${gt_sha}" "${PATCH_SHA_CONFIG}" <<'PY'
 import datetime, json, os, sys
-rep, version, tag, commit, m, st, sh, gt = sys.argv[1:9]
+rep, version, tag, commit, m, st, sh, gt, patch_sha = sys.argv[1:10]
 data = {'stage': 'GLSLANG_STAGE_1_SOURCE', 'version': version, 'tag': tag,
         'commit': commit, 'sha256': {'glslang': m, 'spirv-tools': st,
-        'spirv-headers': sh, 'googletest': gt},
+        'spirv-headers': sh, 'googletest': gt, 'patch': patch_sha},
         'verdict': 'PASS',
         'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
 with open(os.path.join(rep, 'glslang-source.json'), 'w', encoding='utf-8') as f:
