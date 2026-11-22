@@ -15,15 +15,28 @@ echo "runner: $(id -un) uid=$(id -u)"
 echo "rpm: ${RPM}"
 
 # ---------------- 安装 ------------------------------------------------------
+# 优先走 root 预置的受限安装器（与 QGIS 同款思路）：runner 只能调用固定的
+# /usr/local/sbin/assimp-ci-install，无法借安装 RPM 间接获得 root。
+INSTALLER=/usr/local/sbin/assimp-ci-install
 INSTALL_MODE="rpm-extract"
 INSTALL_ROOT="$ASSIMP_RPM_ROOT"
-if sudo -n true >/dev/null 2>&1; then
+if [[ -x "$INSTALLER" ]] && sudo -n -l "$INSTALLER" >/dev/null 2>&1; then
+  echo "检测到受限安装器 ${INSTALLER}"
+  if sudo -n "$INSTALLER" >"${EVID}/rpm-install.log" 2>&1; then
+    INSTALL_MODE="system-rpm"
+    INSTALL_ROOT=""
+  else
+    echo "受限安装器执行失败，降级为 RPM 解包安装；详见 ${EVID}/rpm-install.log"
+  fi
+elif sudo -n true >/dev/null 2>&1; then
   if sudo -n rpm -Uvh --replacefiles --replacepkgs "$RPM" >"${EVID}/rpm-install.log" 2>&1; then
     INSTALL_MODE="system-rpm"
     INSTALL_ROOT=""
   else
     echo "sudo 可用但 rpm 安装失败，降级为 RPM 解包安装；详见 ${EVID}/rpm-install.log"
   fi
+else
+  echo "未授权受限安装器，使用 RPM 解包安装到独立前缀"
 fi
 
 if [[ "$INSTALL_MODE" == "rpm-extract" ]]; then
@@ -66,7 +79,8 @@ assimp_version() {
   local out
   out="$("$BIN" version 2>&1)"
   printf '%s\n' "$out"
-  grep -q "${ASSIMP_VERSION}" <<<"$out"
+  # CLI 只打印 "Version 6.0"，完整 6.0.5 由 pkg_config_version 校验
+  grep -Eq "Version ${ASSIMP_VERSION%.*}([^0-9]|$)" <<<"$out"
 }
 
 assimp_info() {
@@ -147,7 +161,7 @@ if mode == 'system-rpm':
 failed = [k for k in mandatory if checks.get(k) != 'PASS']
 report = {
     'stage': 'ASSIMP_STAGE_3_INSTALL_AND_SELFTEST',
-    'environment': 'self-hosted Kylin V10 (Halberd) / x86_64 / Hygon C86',
+    'environment': 'self-hosted runner host, Kylin V10 / %s' % os.uname().machine,
     'host': os.uname().nodename,
     'run_as': os.popen('id -un').read().strip(),
     'assimp_version': version,

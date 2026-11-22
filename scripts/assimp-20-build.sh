@@ -7,7 +7,6 @@ load_build_env
 source "${REPO_ROOT}/config/assimp.env"
 
 need_cmd python3 "版本比较"
-need_cmd ctest   "单元测试"
 need_cmd objdump "ISA 校验"
 need_cmd rpmbuild "RPM 打包"
 
@@ -78,8 +77,14 @@ log "生成器: ${GEN[0]}"
 rm -f "$BUILD/.cfg-sig"
 
 # ---------------- 配置 ------------------------------------------------------
-: "${ISA_CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
-: "${ISA_CXXFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+if [[ "${TARGET_ARCH:-x86_64}" == "aarch64" ]]; then
+  : "${ISA_CFLAGS:=-march=armv8-a -O2 -pipe}"
+  : "${ISA_CXXFLAGS:=-march=armv8-a -O2 -pipe}"
+else
+  : "${ISA_CFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+  : "${ISA_CXXFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
+fi
+log "ISA: arch=${TARGET_ARCH:-x86_64} policy=${ISA_POLICY:-default} CFLAGS=${ISA_CFLAGS}"
 CMAKE_ARGS=(
   "${GEN[@]}"
   "-S" "$SRC" "-B" "$BUILD"
@@ -105,10 +110,29 @@ printf '%s\n' "${CMAKE_ARGS[@]}" > "${ASSIMP_REPORT_DIR}/assimp-cmake-args.txt"
 "$CMAKE" --build "$BUILD" --parallel "$JOBS" 2>&1 | tee "${LOG}/assimp-build.log"
 
 # ---------------- 单元测试（失败也先留下证据，最后统一判定） ----------------
+# assimp 6.0.5 的 test/CMakeLists.txt 只有 add_test()，顶层没有 enable_testing()，
+# 因此 `ctest` 在根目录永远报 "No tests were found!!!" 且退出码 0（假成功）。
+# 直接运行 unit 可执行文件才是真实测试。
+UNIT_BIN="$(find "$BUILD" -type f -name unit -perm -u+x | head -n1)"
+[[ -n "$UNIT_BIN" ]] || die "未找到 unit 测试程序，编译阶段不完整"
+# A 设备用 GCC11，unit/libassimp 需要 GLIBCXX_3.4.29，必须先让加载器看到新版
+# libstdc++；B 设备用系统 GCC7 全链编译（REQUIRE_GCC11=false），直接跑即可。
+export LD_LIBRARY_PATH="${BUILD}/bin${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+if [[ "${REQUIRE_GCC11:-true}" == "true" ]]; then
+  GCC_RT="$(dirname "$(readlink -f "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || echo /nonexistent)")" 2>/dev/null || true)"
+  if [[ -n "$GCC_RT" && -f "${GCC_RT}/libstdc++.so.6" ]] \
+     && grep -aq 'GLIBCXX_3\.4\.29' "${GCC_RT}/libstdc++.so.6" 2>/dev/null; then
+    export LD_LIBRARY_PATH="${GCC_RT}:${LD_LIBRARY_PATH}"
+    log "unit 运行库(GCC11): ${GCC_RT}"
+  else
+    die "REQUIRE_GCC11=true 但未定位到含 GLIBCXX_3.4.29 的 libstdc++，unit 无法运行"
+  fi
+else
+  log "REQUIRE_GCC11=false：unit 使用系统 libstdc++ ($(g++ --version | head -n1))"
+fi
 CTEST_RC=0
-ctest --test-dir "$BUILD" --output-on-failure -j"$JOBS" 2>&1 \
-  | tee "${LOG}/assimp-ctest.log" || CTEST_RC=$?
-log "ctest 退出码: ${CTEST_RC}"
+"$UNIT_BIN" 2>&1 | tee "${LOG}/assimp-ctest.log" || CTEST_RC=$?
+log "unit 测试退出码: ${CTEST_RC}"
 
 # ---------------- DESTDIR 安装 + 私有前缀 ----------------------------------
 rm -rf "$STAGE" "$ASSIMP_LOCAL_ROOT"
@@ -117,38 +141,45 @@ DESTDIR="$STAGE" "$CMAKE" --install "$BUILD" 2>&1 | tee "${LOG}/assimp-install.l
 [[ -d "${STAGE_PREFIX}/lib64" ]] || die "DESTDIR 安装未产生 ${STAGE_PREFIX}/lib64"
 cp -f "${SRC}/test/models/OBJ/box.obj" "${STAGE_PREFIX}/share/assimp-selftest/box.obj"
 
-# GCC11 运行库：麒麟系统 /usr/lib64 的 libstdc++.so.6 来自 gcc-7.3.0，
-# 不含 GLIBCXX_3.4.29，而本机 gcc 11 编出的 libassimp 需要它。必须随 RPM
-# 一起打包，否则目标机 ldd/启动失败（QGIS 真机曾踩同一个坑）。
-find_gcc_runtime() {
-  local cand dir base
-  for cand in \
-    "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)" \
-    "${DEPS_PREFIX:-}/lib/libstdc++.so.6" \
-    "${DEPS_PREFIX:-}/lib64/libstdc++.so.6" \
-    /usr/local/gcc11/lib64/libstdc++.so.6 \
-    /usr/local/gcc11/lib/libstdc++.so.6 \
-    /usr/lib/gcc/x86_64-redhat-linux/11/libstdc++.so.6; do
-    [[ -e "$cand" ]] || continue
-    base="$(readlink -f "$cand" 2>/dev/null || true)"
-    [[ -n "$base" && -f "$base" ]] || continue
-    if grep -aq 'GLIBCXX_3\.4\.29' "$base" 2>/dev/null; then
-      dirname "$base"
-      return 0
-    fi
-  done
-  return 1
-}
-GCC_LIBDIR="$(find_gcc_runtime || true)"
-[[ -n "$GCC_LIBDIR" ]] || die "未找到含 GLIBCXX_3.4.29 的 GCC11 libstdc++ 运行库"
-cp -L "${GCC_LIBDIR}/$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
-   "${STAGE_PREFIX}/lib64/" 2>/dev/null || cp -L "${GCC_LIBDIR}/libstdc++.so.6" "${STAGE_PREFIX}/lib64/"
-ln -sfn "$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
-  "${STAGE_PREFIX}/lib64/libstdc++.so.6"
-if [[ -f "${GCC_LIBDIR}/libgcc_s.so.1" ]]; then
-  cp -L "${GCC_LIBDIR}/libgcc_s.so.1" "${STAGE_PREFIX}/lib64/" || true
+# GCC 运行库策略（与 QGIS 同款）：
+# - REQUIRE_GCC11=true（A 设备 x86_64）：麒麟 /usr/lib64 的 libstdc++.so.6 来自
+#   gcc-7.3.0，不含 GLIBCXX_3.4.29，而 gcc11 编出的 libassimp 需要它，必须随
+#   RPM 一起打包，否则目标机 ldd/启动失败。
+# - REQUIRE_GCC11=false（B 设备 aarch64）：使用系统 GCC7 全链编译，产物只依赖
+#   系统 libstdc++，不需要也不应打包私有运行库。
+if [[ "${REQUIRE_GCC11:-true}" == "true" ]]; then
+  find_gcc_runtime() {
+    local cand dir base
+    for cand in \
+      "$(g++ -print-file-name=libstdc++.so.6 2>/dev/null || true)" \
+      "${DEPS_PREFIX:-}/lib/libstdc++.so.6" \
+      "${DEPS_PREFIX:-}/lib64/libstdc++.so.6" \
+      /usr/local/gcc11/lib64/libstdc++.so.6 \
+      /usr/local/gcc11/lib/libstdc++.so.6 \
+      /usr/lib/gcc/x86_64-redhat-linux/11/libstdc++.so.6; do
+      [[ -e "$cand" ]] || continue
+      base="$(readlink -f "$cand" 2>/dev/null || true)"
+      [[ -n "$base" && -f "$base" ]] || continue
+      if grep -aq 'GLIBCXX_3\.4\.29' "$base" 2>/dev/null; then
+        dirname "$base"
+        return 0
+      fi
+    done
+    return 1
+  }
+  GCC_LIBDIR="$(find_gcc_runtime || true)"
+  [[ -n "$GCC_LIBDIR" ]] || die "未找到含 GLIBCXX_3.4.29 的 GCC11 libstdc++ 运行库"
+  cp -L "${GCC_LIBDIR}/$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
+     "${STAGE_PREFIX}/lib64/" 2>/dev/null || cp -L "${GCC_LIBDIR}/libstdc++.so.6" "${STAGE_PREFIX}/lib64/"
+  ln -sfn "$(basename "$(readlink -f "${GCC_LIBDIR}/libstdc++.so.6")")" \
+    "${STAGE_PREFIX}/lib64/libstdc++.so.6"
+  if [[ -f "${GCC_LIBDIR}/libgcc_s.so.1" ]]; then
+    cp -L "${GCC_LIBDIR}/libgcc_s.so.1" "${STAGE_PREFIX}/lib64/" || true
+  fi
+  log "已随包打入 GCC11 运行库: $(ls -1 "${STAGE_PREFIX}/lib64"/libstdc++.so.6* | tr '\n' ' ')"
+else
+  log "REQUIRE_GCC11=false：不打包私有 libstdc++，使用目标机系统运行库"
 fi
-log "已随包打入 GCC11 运行库: $(ls -1 "${STAGE_PREFIX}/lib64"/libstdc++.so.6* | tr '\n' ' ')"
 
 cp -a "$STAGE/." "$ASSIMP_LOCAL_ROOT/"
 
@@ -174,25 +205,28 @@ rpath="$(readelf -d "$LIB" 2>/dev/null | grep -E 'RPATH|RUNPATH' || true)"
 if grep -Eq 'actions|_assimp-605|/work/|/rpmbuild|BUILDROOT|/tmp/' <<<"$rpath"; then
   die "libassimp RUNPATH 泄漏构建机路径: $rpath"
 fi
-if objdump -d "$LIB" 2>/dev/null | grep -m1 -Eq '\bzmm[0-9]+\b'; then
+if [[ "${TARGET_ARCH:-x86_64}" == "x86_64" ]] \
+   && objdump -d "$LIB" 2>/dev/null | grep -m1 -Eq '\bzmm[0-9]+\b'; then
   die "libassimp 含 AVX-512 指令，违反 x86-64 baseline 策略"
 fi
 
 # ---------------- 二进制 RPM ------------------------------------------------
+RPM_ARCH="${TARGET_ARCH:-x86_64}"
+RPM_TARGET_DESC="${TARGET_OS:-Kylin V10} / ${TARGET_CPU:-generic}"
 SPEC="${TOP}/SPECS/assimp-kylin.spec"
 cat > "$SPEC" <<EOF
 Name:           assimp
 Version:        ${ASSIMP_VERSION}
 Release:        1.ky10
-Summary:        Assimp ${ASSIMP_VERSION} native build for Kylin V10 x86_64
+Summary:        Assimp ${ASSIMP_VERSION} native build for Kylin V10 ${RPM_ARCH}
 License:        BSD-3-Clause
 URL:            ${ASSIMP_UPSTREAM_REPO}
-BuildArch:      x86_64
+BuildArch:      ${RPM_ARCH}
 AutoReqProv:    no
 %global __os_install_post %{nil}
 %description
-Open Asset Import Library ${ASSIMP_VERSION}, compiled natively on Kylin V10
-(Halberd) / Hygon C86. Runtime libraries are installed under
+Open Asset Import Library ${ASSIMP_VERSION}, compiled natively on
+${RPM_TARGET_DESC}. Runtime libraries are installed under
 ${ASSIMP_INSTALL_PREFIX}; /usr/bin/assimp is a wrapper.
 %prep
 %build
@@ -216,9 +250,10 @@ RPMS="$(find "${TOP}/RPMS" -name '*.rpm' -type f | sort)"
 while IFS= read -r f; do cp -f "$f" "${ASSIMP_OUT_DIR}/rpms/"; done <<< "$RPMS"
 
 python3 - "${ASSIMP_REPORT_DIR}" "${ASSIMP_VERSION}" "${CMAKE_VER}" "${CTEST_RC}" \
-          "${ASSIMP_OUT_DIR}" "${LIB}" <<'PY'
+          "${ASSIMP_OUT_DIR}" "${LIB}" "${TARGET_ARCH:-x86_64}" \
+          "${ISA_POLICY:-x86-64-baseline}" <<'PY'
 import datetime, glob, json, os, sys
-rep, version, cmake_ver, ctest_rc, out, lib = sys.argv[1:7]
+rep, version, cmake_ver, ctest_rc, out, lib, arch, isa = sys.argv[1:9]
 ctest_log = os.path.join(rep, 'logs', 'assimp-ctest.log')
 summary = ''
 if os.path.exists(ctest_log):
@@ -232,8 +267,9 @@ data = {
     'ctest_exit_code': int(ctest_rc), 'ctest_tail': summary,
     'rpms': [os.path.basename(p) for p in sorted(glob.glob(os.path.join(out, 'rpms', 'assimp*.rpm')))],
     'library': lib,
-    'isa_policy': 'x86-64-baseline',
-    'ldd_clean': True, 'rpath_clean': True, 'no_avx512': True,
+    'arch': arch, 'isa_policy': isa,
+    'ldd_clean': True, 'rpath_clean': True,
+    'no_avx512': True if arch == 'x86_64' else 'n/a (aarch64)',
     'recorded_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
 }
 with open(os.path.join(rep, 'assimp-build.json'), 'w', encoding='utf-8') as f:

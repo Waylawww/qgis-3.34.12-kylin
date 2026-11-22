@@ -22,9 +22,10 @@ free="$(free_gb "$ASSIMP_WORK")"
 [[ "$free" -ge 12 ]] || die "可用空间 ${free}GB < 12GB，无法安全编译 Assimp（含测试模型与 RPM）"
 
 python3 - "${ASSIMP_REPORT_DIR}" "${REPO_ROOT}" "${ASSIMP_VERSION}" "${ASSIMP_TAG}" \
-          "${ASSIMP_GIT_COMMIT}" "${actual}" "${free}" <<'PY'
+          "${ASSIMP_GIT_COMMIT}" "${actual}" "${free}" \
+          "${TARGET_ARCH:-x86_64}" "${ISA_POLICY:-x86-64-baseline}" <<'PY'
 import json, os, shutil, subprocess, sys
-rep, root, version, tag, commit, patch_sha, free_gb = sys.argv[1:8]
+rep, root, version, tag, commit, patch_sha, free_gb, arch, isa = sys.argv[1:10]
 os.makedirs(rep, exist_ok=True)
 
 def run(cmd):
@@ -57,7 +58,8 @@ data = {
     'compiler': (run('g++ --version') or [''])[0],
     'tools': tools,
     'free_gb': int(free_gb),
-    'isa_policy': 'x86-64-baseline',
+    'target_arch': arch, 'isa_policy': isa,
+    'require_gcc11': os.environ.get('REQUIRE_GCC11', 'true'),
     'verdict': 'PASS',
 }
 path = os.path.join(rep, 'assimp-environment.json')

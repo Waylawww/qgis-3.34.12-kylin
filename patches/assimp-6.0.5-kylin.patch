@@ -269,6 +269,19 @@ index b7b08de3b..6169f9737 100644
  ADD_ASSIMP_IMPORTER( Q3D
    AssetLib/Q3D/Q3DLoader.cpp
    AssetLib/Q3D/Q3DLoader.h
+diff --git a/code/Common/DefaultProgressHandler.h b/code/Common/DefaultProgressHandler.h
+index 65680c23e..cef54f72b 100644
+--- a/code/Common/DefaultProgressHandler.h
++++ b/code/Common/DefaultProgressHandler.h
+@@ -57,7 +57,7 @@ class DefaultProgressHandler final : public ProgressHandler    {
+ public:
+     ///	@brief Ignores the update callback.
+     bool Update(float) override {
+-        return false;
++        return true;
+     }
+ };
+ 
 diff --git a/code/Common/Importer.cpp b/code/Common/Importer.cpp
 index 684419b94..41f8ea8f6 100644
 --- a/code/Common/Importer.cpp
