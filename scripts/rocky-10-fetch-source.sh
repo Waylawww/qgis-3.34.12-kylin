@@ -106,6 +106,11 @@ for dirpath, _, names in os.walk(root):
         # GCC7 experimental filesystem::path 缺少 lexically_normal()，两处用例
         # （GDAL 的 .prj 路径 / VSG 搜索路径）去掉该调用后语义仍成立。
         out = out.replace('.lexically_normal()', '')
+        # GCC7 experimental 还缺 path::generic_format 与 weakly_canonical()
+        # （URI.cpp）。Linux 下 native/generic 格式相同，去掉格式参数与
+        # weakly_canonical 后 URI 解析语义不变。
+        out = out.replace(', std::experimental::filesystem::path::generic_format', '')
+        out = out.replace('p = weakly_canonical(p);', '')
         # TMS.cpp/URI.cpp 原靠传递包含获得 std::filesystem，需显式补 experimental 头。
         if 'std::experimental::filesystem::' in out and '#include <experimental/filesystem>' not in out:
             lines = out.splitlines(keepends=True)
