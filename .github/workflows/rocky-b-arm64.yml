@@ -116,6 +116,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          {
           echo "=== g++ ==="; g++ --version | head -n1
           echo "=== <filesystem> syntax ==="
           printf '#include <filesystem>\nint main(){}\n' | g++ -std=c++17 -x c++ - -fsyntax-only 2>&1 | head -3
@@ -142,6 +143,8 @@ jobs:
           ls -1 /usr/bin/g++* 2>/dev/null; ls -1 /opt/rh/*/root/usr/bin/g++* 2>/dev/null
           rpm -qa | grep -iE '^(gcc|libstdc\+\+|cpp|boost)' | sort
           echo "=== done probe ==="
+          } 2>&1 | tee "$ROCKY_REPORT_DIR/logs/env-probe.txt"
+          exit 0
 
       - name: Native build / install / test entrypoint
         shell: bash
