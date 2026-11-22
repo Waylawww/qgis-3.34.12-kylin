@@ -70,6 +70,20 @@ cmake --install "$OSG_BUILD" 2>&1 | tee "${LOG}/osg-install.log"
 # ---------- VSG ----------
 VSG_BUILD="${OSG2VSG_WORK}/build-vsg"
 log "---- VSG ${VSG_VERSION} ----"
+# GCC7 aarch64 下 vsg::ref_ptr<vsg::Duplicate> 的 inline 构造未被实例化，导致
+# libvsg.so 缺少该符号，osg2vsg/api_smoke 链接时报 undefined reference。
+# 在 Object.cpp 末尾显式实例化该模板（幂等，sentinel 检测）。
+VSG_OBJECT_CPP="${VSG_SRC_DIR}/src/vsg/core/Object.cpp"
+if ! grep -q 'B_DEVICE_DUP_INSTANTIATION' "$VSG_OBJECT_CPP"; then
+  cat >> "$VSG_OBJECT_CPP" <<'EOF'
+
+// B_DEVICE_DUP_INSTANTIATION: aarch64/GCC7 inline template instantiation workaround
+template class ref_ptr<Duplicate>;
+EOF
+  log "已为 VSG Object.cpp 添加 ref_ptr<Duplicate> 显式实例化"
+else
+  log "VSG Object.cpp 显式实例化已存在"
+fi
 export VULKAN_SDK="$VULKAN_SDK_PREFIX"
 rm -rf "$VSG_BUILD"
 cmake "${GEN[@]}" -S "$VSG_SRC_DIR" -B "$VSG_BUILD" \
