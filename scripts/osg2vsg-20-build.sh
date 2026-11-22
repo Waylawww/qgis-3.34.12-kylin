@@ -89,10 +89,18 @@ STAGE="$OSG2VSG_STAGE_DIR"
 STAGE_PREFIX="${STAGE}${OSG2VSG_INSTALL_PREFIX}"
 LOCAL_PREFIX="${OSG2VSG_LOCAL_ROOT}${OSG2VSG_INSTALL_PREFIX}"
 log "---- osg2vsg ${OSG2VSG_VERSION} ----"
+# 必须传 VULKAN_SDK：osg2vsg 的 find_package(vsg) 会读取它，确保 VSG target
+# 使用私有 1.2.131 头文件而非系统旧版，否则 VK_DESCRIPTOR_BINDING_*_BIT_EXT
+# 会在 vsg/vk/vulkan.h 与系统 vulkan_core.h 中重复定义导致编译失败。
+export VULKAN_SDK="$VULKAN_SDK_PREFIX"
+rm -f "$BUILD/CMakeCache.txt"
 cmake "${GEN[@]}" -S "$OSG2VSG_SRC_DIR" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$OSG2VSG_INSTALL_PREFIX" \
   -DCMAKE_INSTALL_LIBDIR=lib64 -DBUILD_SHARED_LIBS=ON \
-  "-DCMAKE_PREFIX_PATH=${VSG_PREFIX};${OSG_PREFIX};${DEPS_PREFIX:-}" \
+  -DVULKAN_SDK="$VULKAN_SDK_PREFIX" \
+  -DVulkan_INCLUDE_DIR="$VULKAN_SDK_PREFIX/include" \
+  -DVulkan_LIBRARY=/usr/lib64/libvulkan.so \
+  "-DCMAKE_PREFIX_PATH=${VSG_PREFIX};${OSG_PREFIX};${VULKAN_SDK_PREFIX};${DEPS_PREFIX:-}" \
   "-DCMAKE_C_FLAGS=${ISA_CFLAGS}" "-DCMAKE_CXX_FLAGS=${ISA_CXXFLAGS}" \
   2>&1 | tee "${LOG}/osg2vsg-cmake-config.log"
 cmake --build "$BUILD" --parallel "$JOBS" 2>&1 | tee "${LOG}/osg2vsg-build.log"
