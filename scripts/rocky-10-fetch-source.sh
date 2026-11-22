@@ -111,6 +111,10 @@ for dirpath, _, names in os.walk(root):
         # weakly_canonical 后 URI 解析语义不变。
         out = out.replace(', std::experimental::filesystem::path::generic_format', '')
         out = out.replace('p = weakly_canonical(p);', '')
+        # GCC7 的 std::atomic<time_point> 默认构造被删除，显式值初始化。
+        out = out.replace(
+            'mutable std::atomic<vsg::time_point> lastTraversalTime;',
+            'mutable std::atomic<vsg::time_point> lastTraversalTime{ vsg::time_point{} };')
         # TMS.cpp/URI.cpp 原靠传递包含获得 std::filesystem，需显式补 experimental 头。
         if 'std::experimental::filesystem::' in out and '#include <experimental/filesystem>' not in out:
             lines = out.splitlines(keepends=True)
