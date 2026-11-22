@@ -142,6 +142,10 @@ jobs:
           echo "=== compilers/rpms ==="
           ls -1 /usr/bin/g++* 2>/dev/null; ls -1 /opt/rh/*/root/usr/bin/g++* 2>/dev/null
           rpm -qa | grep -iE '^(gcc|libstdc\+\+|cpp|boost)' | sort
+          echo "=== yum provides libstdc++fs ==="
+          yum provides '*/libstdc++fs.a' '*/libstdc++fs.so*' 2>&1 | head -30
+          echo "=== yum gcc/libstdc packages ==="
+          yum list 2>/dev/null | grep -iE 'libstdc|gcc.*static|gcc-toolset' | head -20
           echo "=== done probe ==="
           } 2>&1 | tee "$ROCKY_REPORT_DIR/logs/env-probe.txt"
           exit 0
