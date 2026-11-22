@@ -4,6 +4,8 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsg.env"
+# B 设备前缀恢复（config/vsg.env 会把 GLSLANG_PREFIX 覆盖为 A 设备 /opt 路径）
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
 
 require_linux_or_container
 [[ "$(id -u)" -ne 0 ]] || die "拒绝以 root 身份编译"

@@ -4,6 +4,8 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsg.env"
+# B 设备前缀恢复（config/vsg.env 会把 GLSLANG_PREFIX 覆盖为 A 设备 /opt 路径）
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
 
 need_cmd python3 "构建"
 need_cmd objdump "ISA 校验"

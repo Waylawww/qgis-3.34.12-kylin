@@ -4,6 +4,8 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_build_env
 source "${REPO_ROOT}/config/vsg.env"
+# B 设备前缀恢复（config/vsg.env 会把 GLSLANG_PREFIX 覆盖为 A 设备 /opt 路径）
+[[ -n "${B_GLSLANG_PREFIX:-}" ]] && GLSLANG_PREFIX="$B_GLSLANG_PREFIX"
 
 RPM="$(find "${VSG_OUT_DIR}/rpms" -maxdepth 1 -name 'vsg-*.rpm' ! -name '*.src.rpm' -type f | sort | head -n1)"
 [[ -n "$RPM" ]] || die "未找到 vsg 二进制 RPM"
