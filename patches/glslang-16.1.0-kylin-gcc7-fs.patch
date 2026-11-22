@@ -20,7 +20,9 @@
  
  namespace glslang {
  
-@@ -105,11 +115,11 @@
+--- a/glslang/Include/InfoSink.h
++++ b/glslang/Include/InfoSink.h
+@@ -105,7 +105,7 @@
          }
  
          if(loc.getFilename() == nullptr && shaderFileName != nullptr && absolute) {
@@ -29,8 +31,38 @@
          } else {
              std::string location = loc.getStringNameOrNum(false);
              if (absolute) {
+--- a/glslang/Include/InfoSink.h
++++ b/glslang/Include/InfoSink.h
+@@ -109,7 +109,7 @@
+         } else {
+             std::string location = loc.getStringNameOrNum(false);
+             if (absolute) {
 -                append(std::filesystem::absolute(location).string());
 +                append(glslang::glslangAbsolutePath(location));
              } else {
                  append(location);
              }
+--- a/gtests/CMakeLists.txt
++++ b/gtests/CMakeLists.txt
+@@ -87,8 +87,7 @@
+         endif()
+ 
+         set(LIBRARIES
+-            glslang glslang-default-resource-limits
+-            $<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.0>>:stdc++fs>)
++            glslang glslang-default-resource-limits)
+ 
+         target_link_libraries(glslangtests PRIVATE ${LIBRARIES} gmock)
+ 
+--- a/StandAlone/CMakeLists.txt
++++ b/StandAlone/CMakeLists.txt
+@@ -59,8 +59,7 @@
+ 
+ set(LIBRARIES
+     glslang
+-    glslang-default-resource-limits
+-    $<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,9.0>>:stdc++fs>)
++    glslang-default-resource-limits)
+ 
+ if(WIN32)
+     set(LIBRARIES ${LIBRARIES} psapi)
