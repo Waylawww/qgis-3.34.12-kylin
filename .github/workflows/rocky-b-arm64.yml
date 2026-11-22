@@ -130,9 +130,17 @@ jobs:
           printf '#include <experimental/filesystem>\nint main(){ auto p = std::experimental::filesystem::current_path(); return p.empty(); }\n' > /tmp/fstest.cpp
           g++ -std=c++17 /tmp/fstest.cpp -o /tmp/fstest -lstdc++fs 2>&1 | head -8
           [[ -x /tmp/fstest ]] && { /tmp/fstest; echo "EXPERIMENTAL_FS_RUNTIME_RC=$?"; }
+          echo "=== libstdc++ fs symbols ==="
+          nm -D /usr/lib64/libstdc++.so.6 2>/dev/null | grep -i filesystem | head -10
+          echo "=== boost filesystem ==="
+          find /usr /opt -name 'libboost_filesystem*' 2>/dev/null | head -10
+          ls -1 /usr/include/boost/filesystem.hpp 2>/dev/null
+          echo "=== gcc in deps/prefixes ==="
+          find /opt/actions-runner/_work/qgis-3.34.12-kylin -path '*/bin/g++*' 2>/dev/null | head -10
+          find /opt -name 'libstdc++fs*' 2>/dev/null | head -10
           echo "=== compilers/rpms ==="
           ls -1 /usr/bin/g++* 2>/dev/null; ls -1 /opt/rh/*/root/usr/bin/g++* 2>/dev/null
-          rpm -qa | grep -iE '^(gcc|libstdc\+\+|cpp)' | sort
+          rpm -qa | grep -iE '^(gcc|libstdc\+\+|cpp|boost)' | sort
           echo "=== done probe ==="
 
       - name: Native build / install / test entrypoint
