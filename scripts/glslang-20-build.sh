@@ -105,12 +105,16 @@ else
   : "${ISA_CXXFLAGS:=-march=x86-64 -mtune=generic -O2 -pipe}"
 fi
 log "ISA: arch=${TARGET_ARCH:-x86_64} policy=${ISA_POLICY:-default} CFLAGS=${ISA_CFLAGS}"
-# B 设备 GCC7 的 <experimental/filesystem> 需要链接 -lstdc++fs。
-EXTRA_LINK_FLAGS=''
+# B 设备 GCC7 的 <experimental/filesystem> 在部分发行版需要 -lstdc++fs，
+# 在麒麟 GCC7.3 已内置到 libstdc++.so。自动探测，存在才链接。
 CXX_STANDARD_LIBS=''
 if [[ -n "${GLSLANG_EXTRA_LINK_LIBS:-}" ]]; then
-  CXX_STANDARD_LIBS="-l${GLSLANG_EXTRA_LINK_LIBS}"
-  log "额外 C++ 标准库: ${CXX_STANDARD_LIBS}"
+  if echo 'int main(){}' | g++ -x c++ - -l"${GLSLANG_EXTRA_LINK_LIBS}" -o /dev/null 2>/dev/null; then
+    CXX_STANDARD_LIBS="-l${GLSLANG_EXTRA_LINK_LIBS}"
+    log "额外 C++ 标准库可用: ${CXX_STANDARD_LIBS}"
+  else
+    log "额外库 ${GLSLANG_EXTRA_LINK_LIBS} 不可用（已内置到 libstdc++），跳过链接"
+  fi
 fi
 CMAKE_ARGS=(
   "${GEN[@]}" "-S" "$SRC" "-B" "$BUILD"
