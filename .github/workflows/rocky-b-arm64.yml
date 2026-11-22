@@ -112,6 +112,32 @@ jobs:
           echo "toolchain: $(g++ --version | head -n1)"
           df -h "$BASE"; free -h
 
+      - name: Environment probe (GCC filesystem capability)
+        shell: bash
+        run: |
+          set +e
+          echo "=== g++ ==="; g++ --version | head -n1
+          echo "=== <filesystem> syntax ==="
+          printf '#include <filesystem>\nint main(){}\n' | g++ -std=c++17 -x c++ - -fsyntax-only 2>&1 | head -3
+          echo "=== <experimental/filesystem> syntax ==="
+          printf '#include <experimental/filesystem>\nint main(){}\n' | g++ -std=c++17 -x c++ - -fsyntax-only 2>&1 | head -3
+          echo "=== find libstdc++fs ==="
+          find /usr /opt -name 'libstdc++fs*' 2>/dev/null | head -20
+          echo "=== link -lstdc++fs ==="
+          printf 'int main(){}\n' > /tmp/fsprobe.cpp
+          g++ -x c++ /tmp/fsprobe.cpp -lstdc++fs -o /tmp/fsprobe 2>&1 | head -5
+          echo "=== experimental filesystem link+run ==="
+          cat > /tmp/fstest.cpp <<'EOF'
+#include <experimental/filesystem>
+int main(){ auto p = std::experimental::filesystem::current_path(); return p.empty(); }
+EOF
+          g++ -std=c++17 /tmp/fstest.cpp -o /tmp/fstest -lstdc++fs 2>&1 | head -8
+          [[ -x /tmp/fstest ]] && { /tmp/fstest; echo "EXPERIMENTAL_FS_RUNTIME_RC=$?"; }
+          echo "=== compilers/rpms ==="
+          ls -1 /usr/bin/g++* 2>/dev/null; ls -1 /opt/rh/*/root/usr/bin/g++* 2>/dev/null
+          rpm -qa | grep -iE '^(gcc|libstdc\+\+|cpp)' | sort
+          echo "=== done probe ==="
+
       - name: Native build / install / test entrypoint
         shell: bash
         run: |
