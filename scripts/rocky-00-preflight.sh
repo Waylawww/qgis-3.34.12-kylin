@@ -12,9 +12,10 @@ for cmd in git curl tar python3 g++ gcc cmake ninja rpm rpmbuild rpm2cpio cpio l
 done
 free="$(free_gb "$ROCKY_WORK")"
 [[ "$free" -ge 12 ]] || die "可用空间 ${free}GB < 12GB"
-python3 - "${ROCKY_REPORT_DIR}" "${ROCKY_VERSION}" "${ROCKY_COMMIT}" "${free}" <<'PY'
+python3 - "${ROCKY_REPORT_DIR}" "${ROCKY_VERSION}" "${ROCKY_COMMIT}" "${free}" \
+        "${TARGET_ARCH:-x86_64}" "${ISA_POLICY:-x86-64-baseline}" <<'PY'
 import datetime, json, os, platform, sys
-rep, version, commit, free_gb = sys.argv[1:5]
+rep, version, commit, free_gb, arch, isa = sys.argv[1:7]
 os.makedirs(rep, exist_ok=True)
 os_release = {}
 if os.path.exists('/etc/os-release'):
@@ -24,7 +25,7 @@ if os.path.exists('/etc/os-release'):
 data = {'stage':'ROCKY_STAGE_0_PREFLIGHT','version':version,'commit':commit,
         'os_release':os_release,'host':platform.node(),'arch':platform.machine(),
         'user':os.popen('id -un').read().strip(),'free_gb':int(free_gb),
-        'isa_policy':'x86-64-baseline','verdict':'PASS',
+        'target_arch':arch,'isa_policy':isa,'verdict':'PASS',
         'recorded_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
 with open(os.path.join(rep,'rocky-environment.json'),'w',encoding='utf-8') as f:
     json.dump(data,f,ensure_ascii=False,indent=2); f.write('\n')

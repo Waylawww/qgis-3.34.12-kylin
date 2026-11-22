@@ -11,6 +11,20 @@ EVID="${ROCKY_REPORT_DIR}/install-selftest"
 mkdir -p "$EVID"
 echo "runner=$(id -un) rpm=$RPM"
 
+# B 设备 vsg/glslang 前缀（cmake config + 运行库）；A 设备用 /opt 系统路径。
+VSG_DEP_PREFIX="${B_VSG_PREFIX:-/opt/osg2vsg-0.4.0}"
+GLSLANG_DEP_PREFIX="${B_GLSLANG_PREFIX:-/opt/glslang-16.1.0}"
+
+# api_smoke 需要 cmake >= 3.21（rocky 上游要求）；优先用自举的新版 cmake。
+SMOKE_CMAKE="$(command -v cmake)"
+for bc in "${DEPS_PREFIX:-}/bin/cmake" "${B_GLSLANG_PREFIX%/opt/*}/tools"/cmake-*/bin/cmake; do
+  [[ -x "$bc" ]] || continue
+  if "$bc" --version 2>/dev/null | head -n1 | grep -Eq '3\.(2[1-9]|[3-9][0-9])'; then
+    SMOKE_CMAKE="$bc"; break
+  fi
+done
+log "api_smoke cmake: ${SMOKE_CMAKE} ($(${SMOKE_CMAKE} --version | head -n1))"
+
 INSTALLER=/usr/local/sbin/rocky-ci-install
 INSTALL_MODE="rpm-extract"
 INSTALL_ROOT="$ROCKY_RPM_ROOT"
@@ -39,7 +53,7 @@ fi
 PFX="${INSTALL_ROOT}${ROCKY_INSTALL_PREFIX}"
 LIBDIR="${PFX}/lib64"
 INCDIR="${PFX}/include"
-export LD_LIBRARY_PATH="${LIBDIR}:${PFX}/lib:/opt/osg2vsg-0.4.0/lib64:/opt/glslang-16.1.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${LIBDIR}:${PFX}/lib:${VSG_DEP_PREFIX}/lib64:${VSG_DEP_PREFIX}/lib:${GLSLANG_DEP_PREFIX}/lib64:${GLSLANG_DEP_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 [[ -f "${LIBDIR}/librocky.so.${ROCKY_VERSION_ABI}" || -L "${LIBDIR}/librocky.so.${ROCKY_VERSION_ABI}" ]] \
   || die "RPM 安装树缺少 librocky.so.${ROCKY_VERSION_ABI}"
 
@@ -80,8 +94,8 @@ int main() {
     return 0;
 }
 EOF
-  cmake -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="${PFX};${ROCKY_DEPS_PREFIX};/opt/osg2vsg-0.4.0;/opt/glslang-16.1.0;${VULKAN_SDK_PREFIX}" \
+  "$SMOKE_CMAKE" -S "$d" -B "$d/build" -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="${PFX};${ROCKY_DEPS_PREFIX};${VSG_DEP_PREFIX};${GLSLANG_DEP_PREFIX};${VULKAN_SDK_PREFIX}" \
     -Drocky_DIR="${LIBDIR}/cmake/rocky" \
     -Dglm_DIR="${PFX}/lib/cmake/glm" \
     -Dspdlog_DIR="${PFX}/lib/cmake/spdlog" \
@@ -89,8 +103,8 @@ EOF
     -Dnlohmann_json_DIR="${PFX}/lib/cmake/nlohmann_json" \
     -DVulkan_INCLUDE_DIR="${VULKAN_SDK_PREFIX}/include" \
     -DVulkan_LIBRARY=/usr/lib64/libvulkan.so
-  cmake --build "$d/build" --parallel 2
-  LD_LIBRARY_PATH="${LIBDIR}:${PFX}/lib:/opt/osg2vsg-0.4.0/lib64:/opt/glslang-16.1.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+  "$SMOKE_CMAKE" --build "$d/build" --parallel 2
+  LD_LIBRARY_PATH="${LIBDIR}:${PFX}/lib:${VSG_DEP_PREFIX}/lib64:${GLSLANG_DEP_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
     "$d/build/smoke"
 }
 
@@ -106,7 +120,7 @@ upstream_tests() {
   local exe="${LIBDIR}/../bin/rocky_tests" cwd="${PFX}/share/rocky"
   [[ -x "$exe" ]] || return 0
   mkdir -p "$cwd"
-  ( cd "$cwd" && LD_LIBRARY_PATH="$LIBDIR:${PFX}/lib:/opt/osg2vsg-0.4.0/lib64:/opt/glslang-16.1.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$exe" --list-tests )
+  ( cd "$cwd" && LD_LIBRARY_PATH="$LIBDIR:${PFX}/lib:${VSG_DEP_PREFIX}/lib64:${GLSLANG_DEP_PREFIX}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" "$exe" --list-tests )
 }
 
 echo "== 安装模式: ${INSTALL_MODE} =="
@@ -127,7 +141,7 @@ mandatory = ('package_contents', 'installed_files', 'api_smoke', 'ldd_clean')
 if mode == 'system-rpm': mandatory += ('rpm_installed',)
 failed = [k for k in mandatory if checks.get(k) != 'PASS']
 report = {'stage': 'ROCKY_STAGE_3_INSTALL_AND_SELFTEST',
-          'environment': 'self-hosted Kylin V10 / x86_64 / Hygon C86',
+          'environment': 'self-hosted runner host, Kylin V10 / %s' % os.uname().machine,
           'rocky_version': version, 'install_mode': mode,
           'checks': checks, 'failed_checks': failed,
           'verdict': 'PASS' if not failed else 'FAIL'}
