@@ -116,6 +116,15 @@ if [[ -n "${GLSLANG_EXTRA_LINK_LIBS:-}" ]]; then
     log "额外库 ${GLSLANG_EXTRA_LINK_LIBS} 不可用（已内置到 libstdc++），跳过链接"
   fi
 fi
+# 配置签名：关键 flags 变化（如 CXX_STANDARD_LIBS 从 -lstdc++fs 变为空）时
+# 必须清掉 CMakeCache，否则 CMake 会沿用旧值（麒麟 GCC7 无 libstdc++fs 库）。
+CFG_SIG="${ISA_CFLAGS}|${ISA_CXXFLAGS}|${CXX_STANDARD_LIBS}|${GEN[0]}|${CMAKE}"
+CFG_SIG_FILE="${BUILD}/.glslang-cfg-sig"
+if [[ -f "$BUILD/CMakeCache.txt" ]] \
+   && [[ "$(cat "$CFG_SIG_FILE" 2>/dev/null || true)" != "$CFG_SIG" ]]; then
+  log "CMake 配置变化，清理旧缓存以应用新 flags"
+  rm -f "$BUILD/CMakeCache.txt"
+fi
 CMAKE_ARGS=(
   "${GEN[@]}" "-S" "$SRC" "-B" "$BUILD"
   "-DCMAKE_BUILD_TYPE=Release"
@@ -140,6 +149,7 @@ CMAKE_ARGS=(
 )
 printf '%s\n' "${CMAKE_ARGS[@]}" > "${GLSLANG_REPORT_DIR}/glslang-cmake-args.txt"
 "$CMAKE" "${CMAKE_ARGS[@]}" 2>&1 | tee "${LOG}/glslang-cmake-config.log"
+printf '%s\n' "$CFG_SIG" > "$CFG_SIG_FILE"
 "$CMAKE" --build "$BUILD" --parallel "$JOBS" 2>&1 | tee "${LOG}/glslang-build.log"
 
 # unit/ctest 运行库：A 设备需 GCC11 新版 libstdc++；B 设备走系统 GCC7。
